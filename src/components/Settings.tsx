@@ -347,40 +347,42 @@ export default function Settings() {
   };
 
   return (
-    <div className="space-y-6">
-      <div>
-        <h1 className="text-3xl font-bold tracking-tight text-slate-900 flex items-center gap-3">
-          <Settings2 className="w-8 h-8 text-indigo-600" /> System Settings
-        </h1>
-        <p className="text-slate-500 mt-1">Configure laboratory equipment, validation parameters, and operators.</p>
+    <div className="space-y-6 relative">
+      <div className="flex flex-col md:flex-row md:justify-between md:items-end gap-4">
+        <div>
+          <h1 className="text-4xl font-display font-bold tracking-tight text-slate-900 drop-shadow-sm flex items-center gap-3">
+             <Settings2 className="w-8 h-8 text-indigo-600" /> System Settings
+          </h1>
+          <p className="text-slate-500 mt-1.5 font-medium">Configure laboratory equipment, validation parameters, and operators.</p>
+        </div>
       </div>
 
-      <div className="flex gap-2 border-b border-slate-200 overflow-x-auto">
+      <div className="flex gap-2 border-b border-slate-200 overflow-x-auto scroolbar-hide pb-2">
         <button 
           onClick={() => setActiveTab('equipment')}
-          className={cn("px-4 py-2 font-medium text-sm flex items-center gap-2 border-b-2 transition-colors whitespace-nowrap", 
-            activeTab === 'equipment' ? "border-indigo-600 text-indigo-700" : "border-transparent text-slate-500 hover:text-slate-700")}
+          className={cn("px-5 py-3 rounded-t-xl font-bold text-sm flex items-center gap-2.5 transition-all duration-300 whitespace-nowrap outline-none", 
+            activeTab === 'equipment' ? "bg-white border-b-2 border-indigo-600 text-indigo-700 shadow-[0_-4px_10px_rgba(0,0,0,0.02)]" : "border-b-2 border-transparent text-slate-500 hover:text-slate-900 hover:bg-white/50")}
         >
           <MonitorSmartphone className="w-4 h-4" /> 1. Register Equipment
         </button>
         <button 
           onClick={() => setActiveTab('parameters')}
-          className={cn("px-4 py-2 font-medium text-sm flex items-center gap-2 border-b-2 transition-colors whitespace-nowrap", 
-            activeTab === 'parameters' ? "border-indigo-600 text-indigo-700" : "border-transparent text-slate-500 hover:text-slate-700")}
+          className={cn("px-5 py-3 rounded-t-xl font-bold text-sm flex items-center gap-2.5 transition-all duration-300 whitespace-nowrap outline-none", 
+            activeTab === 'parameters' ? "bg-white border-b-2 border-indigo-600 text-indigo-700 shadow-[0_-4px_10px_rgba(0,0,0,0.02)]" : "border-b-2 border-transparent text-slate-500 hover:text-slate-900 hover:bg-white/50")}
         >
           <ListChecks className="w-4 h-4" /> 2. Control Parameters
         </button>
         <button 
           onClick={() => setActiveTab('qrcodes')}
-          className={cn("px-4 py-2 font-medium text-sm flex items-center gap-2 border-b-2 transition-colors whitespace-nowrap", 
-            activeTab === 'qrcodes' ? "border-indigo-600 text-indigo-700" : "border-transparent text-slate-500 hover:text-slate-700")}
+          className={cn("px-5 py-3 rounded-t-xl font-bold text-sm flex items-center gap-2.5 transition-all duration-300 whitespace-nowrap outline-none", 
+            activeTab === 'qrcodes' ? "bg-white border-b-2 border-indigo-600 text-indigo-700 shadow-[0_-4px_10px_rgba(0,0,0,0.02)]" : "border-b-2 border-transparent text-slate-500 hover:text-slate-900 hover:bg-white/50")}
         >
           <QrCode className="w-4 h-4" /> 3. QR Codes
         </button>
         <button 
           onClick={() => setActiveTab('operators')}
-          className={cn("px-4 py-2 font-medium text-sm flex items-center gap-2 border-b-2 transition-colors whitespace-nowrap", 
-            activeTab === 'operators' ? "border-indigo-600 text-indigo-700" : "border-transparent text-slate-500 hover:text-slate-700")}
+          className={cn("px-5 py-3 rounded-t-xl font-bold text-sm flex items-center gap-2.5 transition-all duration-300 whitespace-nowrap outline-none", 
+            activeTab === 'operators' ? "bg-white border-b-2 border-indigo-600 text-indigo-700 shadow-[0_-4px_10px_rgba(0,0,0,0.02)]" : "border-b-2 border-transparent text-slate-500 hover:text-slate-900 hover:bg-white/50")}
         >
           <Users className="w-4 h-4" /> 4. Personnel
         </button>

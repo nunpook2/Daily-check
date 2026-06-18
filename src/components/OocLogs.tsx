@@ -132,10 +132,10 @@ export default function OocLogs() {
                                           {isPassed ? 'Passed' : 'Action Req.'}
                                        </span>
                                     </div>
-                                    <span className="text-sm text-slate-600 font-medium">{format(log.timestamp, 'dd MMM yyyy, HH:mm')}</span>
+                                    <span className="text-sm text-slate-700 font-bold">{format(log.timestamp, 'dd MMM yyyy, HH:mm')}</span>
                                   </div>
-                                  <p className="text-sm text-slate-500 mb-3">Operator: {log.operatorName}</p>
-                                  <p className={cn("text-sm font-medium p-3 rounded-lg leading-relaxed border", 
+                                  <p className="text-sm font-bold text-slate-600 mb-3">Operator: <span className="text-slate-800">{log.operatorName}</span></p>
+                                  <p className={cn("text-sm font-bold p-3 rounded-lg leading-relaxed border", 
                                      isPassed ? "text-slate-700 bg-slate-50 border-slate-200" : "text-rose-700 bg-rose-100/50 border-rose-200/50"
                                   )}>
                                     {log.notes || (isPassed ? 'All parameters normal' : 'Values out of control limits.')}

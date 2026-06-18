@@ -177,41 +177,41 @@ export default function PerformCheck({ onSaved, initialEqCode }: { onSaved?: () 
             exit={{ opacity: 0, x: -20 }}
             className="space-y-6"
           >
-            <div>
-              <h2 className="text-2xl font-bold tracking-tight text-slate-900">Operator Terminal</h2>
-              <p className="text-slate-500">Scan equipment barcode or select from the list below.</p>
-            </div>
+             <div>
+               <h2 className="text-3xl font-display font-bold tracking-tight text-slate-900 drop-shadow-sm mb-1.5">Operator Terminal</h2>
+               <p className="text-slate-600 font-bold tracking-wide text-sm">Strict validation mode requires physical QR scan.</p>
+             </div>
             
             {/* Scan Area */}
-            <div className="bg-white rounded-2xl shadow-sm border border-indigo-100 p-6 md:p-8 flex flex-col items-center">
-              <div className="w-16 h-16 bg-indigo-50 rounded-full flex items-center justify-center mb-4 border border-indigo-100">
-                 <ScanLine className="w-8 h-8 text-indigo-600" />
+            <div className="bg-white/80 backdrop-blur border border-slate-200/60 rounded-3xl shadow-sm overflow-hidden flex flex-col items-center p-8 md:p-12 relative group">
+              <div className="absolute top-0 right-0 w-64 h-64 bg-indigo-500/10 rounded-full blur-[80px] -translate-y-1/2 translate-x-1/2 pointer-events-none"></div>
+              
+              <div className="w-20 h-20 bg-gradient-to-br from-indigo-50 to-indigo-100/50 rounded-2xl flex items-center justify-center mb-6 shadow-inner border border-indigo-200/50">
+                 <ScanLine className="w-10 h-10 text-indigo-600" />
               </div>
-              <h3 className="text-lg font-semibold text-slate-900 mb-2">Scan QR Code to Start Check</h3>
-              <p className="text-sm text-slate-500 text-center max-w-sm mb-6">
-                To prevent remote checks, you must scan the QR code physically located on the equipment.
+              <h3 className="text-2xl font-display font-bold text-slate-900 mb-3 text-center">Scan Asset Code</h3>
+              <p className="text-sm font-medium text-slate-500 text-center max-w-sm mb-8 leading-relaxed">
+                To prevent remote checks, you must scan the unique QR code physically affixed to the equipment.
               </p>
               
               {showCamera ? (
-                <div className="w-full max-w-sm aspect-square bg-black rounded-2xl overflow-hidden shadow-inner mb-4 relative">
+                <div className="w-full max-w-[320px] aspect-square bg-slate-900/5 rounded-[2rem] overflow-hidden shadow-inner mb-6 relative border-[8px] border-slate-100 ring-1 ring-slate-200 group relative">
                   <Scanner 
                     onScan={(detectedCodes) => {
                       if (detectedCodes && detectedCodes.length > 0) {
                         const val = detectedCodes[0].rawValue;
                         let extractedCode = val;
                         try {
-                          // Try to parse as URL
                           const url = new URL(val);
                           const searchParams = new URLSearchParams(url.search);
                           if (searchParams.has('eqCode')) {
                             extractedCode = searchParams.get('eqCode') as string;
                           }
                         } catch (e) {
-                          // It's not a URL, so just use the raw value
+                          // Ignore
                         }
                         
                         setScanCode(extractedCode);
-                        // Trigger check immediately
                         const eq = equipments.find(e => e.id === extractedCode || e.code.toLowerCase() === extractedCode.toLowerCase());
                         if (eq) {
                           setShowCamera(false);
@@ -222,22 +222,31 @@ export default function PerformCheck({ onSaved, initialEqCode }: { onSaved?: () 
                       }
                     }} 
                   />
-                  <button onClick={() => setShowCamera(false)} className="absolute bottom-4 left-1/2 transform -translate-x-1/2 px-4 py-2 bg-white/90 text-slate-800 font-medium rounded-full shadow backdrop-blur text-sm">
+                  {/* Decorative corner scanning reticles */}
+                  <div className="absolute top-4 left-4 w-12 h-12 border-t-4 border-l-4 border-emerald-500 rounded-tl-xl opacity-70"></div>
+                  <div className="absolute top-4 right-4 w-12 h-12 border-t-4 border-r-4 border-emerald-500 rounded-tr-xl opacity-70"></div>
+                  <div className="absolute bottom-4 left-4 w-12 h-12 border-b-4 border-l-4 border-emerald-500 rounded-bl-xl opacity-70"></div>
+                  <div className="absolute bottom-4 right-4 w-12 h-12 border-b-4 border-r-4 border-emerald-500 rounded-br-xl opacity-70"></div>
+                  
+                  <div className="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent pointer-events-none"></div>
+
+                  <button onClick={() => setShowCamera(false)} className="absolute bottom-6 left-1/2 transform -translate-x-1/2 px-5 py-2.5 bg-white/95 text-slate-800 font-bold rounded-full shadow-lg backdrop-blur text-sm hover:scale-105 transition-transform duration-300 border border-slate-200/50">
                     Close Camera
                   </button>
                 </div>
               ) : (
                 <button 
                   onClick={() => { setShowCamera(true); setScanError(''); }}
-                  className="w-full max-w-sm py-4 px-6 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold rounded-xl transition-all shadow flex items-center justify-center gap-3 mb-4"
+                  className="w-full max-w-[320px] py-5 px-6 bg-gradient-to-r from-indigo-600 to-indigo-700 hover:from-indigo-500 hover:to-indigo-600 outline-none text-white font-bold rounded-2xl transition-all shadow-[0_8px_30px_rgb(79,70,229,0.25)] hover:shadow-[0_8px_40px_rgb(79,70,229,0.4)] hover:-translate-y-1 flex items-center justify-center gap-3 mb-6 relative overflow-hidden group"
                 >
-                  <Camera className="w-5 h-5" />
-                  Open Camera Scanner
+                  <div className="absolute inset-0 bg-white/20 w-1/2 -skew-x-[30deg] -translate-x-[150%] group-hover:translate-x-[250%] transition-transform duration-1000"></div>
+                  <Camera className="w-[22px] h-[22px]" />
+                  <span className="tracking-wide text-[15px]">Open Camera Scanner</span>
                 </button>
               )}
 
-              <p className="text-xs text-slate-400 mt-2 flex items-center gap-1"><AlertTriangle className="w-3 h-3" /> Manual selection has been disabled by admin to ensure onsite checks.</p>
-              {scanError && <p className="mt-3 text-sm text-rose-500 font-medium bg-rose-50 px-4 py-2 rounded-lg">{scanError}</p>}
+              <p className="text-[11px] font-mono tracking-wider text-slate-400 mt-2 flex items-center gap-1.5 uppercase font-semibold"><AlertTriangle className="w-3.5 h-3.5 text-amber-500" /> Manual selection locked for audit integrity</p>
+              {scanError && <p className="mt-4 text-[13px] text-rose-600 font-bold bg-rose-50 border border-rose-100 px-5 py-3 rounded-xl shadow-sm">{scanError}</p>}
             </div>
 
             <div className="bg-amber-50 rounded-xl p-4 border border-amber-200">
@@ -253,33 +262,34 @@ export default function PerformCheck({ onSaved, initialEqCode }: { onSaved?: () 
              initial={{ opacity: 0, x: 20 }}
              animate={{ opacity: 1, x: 0 }}
              exit={{ opacity: 0, x: 20 }}
-             className="bg-white rounded-xl shadow-sm border border-slate-200"
+             className="bg-white/90 backdrop-blur-md rounded-3xl shadow-sm border border-slate-200/60 overflow-hidden"
           >
-            <div className="p-4 md:p-6 border-b border-slate-100 flex items-center gap-4 bg-slate-50/50 sticky top-0 z-10 backdrop-blur-md bg-white/90">
+            <div className="p-5 md:p-8 border-b border-slate-100 flex items-center gap-5 bg-white sticky top-0 z-10">
                <button 
                 type="button"
                 onClick={() => setSelectedEq(null)}
-                className="p-2 hover:bg-slate-200/50 rounded-lg text-slate-500 transition-colors"
+                className="p-2.5 bg-slate-50 hover:bg-slate-100 text-slate-500 rounded-xl transition-colors border border-slate-200"
                >
                  <ArrowLeft className="w-5 h-5" />
                </button>
                <div>
-                  <h2 className="text-xl font-bold tracking-tight text-slate-900 leading-tight">Check: {selectedEq.name}</h2>
-                  <p className="text-xs md:text-sm text-slate-500">{selectedEq.code} • Form Protocol v1.0</p>
+                  <h2 className="text-2xl font-display font-bold tracking-tight text-slate-900 leading-tight">Check: {selectedEq.name}</h2>
+                  <p className="text-sm font-medium tracking-wide text-indigo-500/80 mt-0.5">{selectedEq.code} • Validation Protocol</p>
                </div>
             </div>
 
-            <form onSubmit={handleSubmit} className="p-4 md:p-6 space-y-8">
-               <div className="space-y-4 bg-indigo-50/50 border border-indigo-100 p-4 rounded-xl">
-                 <h3 className="text-xs font-bold text-indigo-800 tracking-widest uppercase">Check Context</h3>
-                 <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <form onSubmit={handleSubmit} className="p-5 md:p-8 space-y-8">
+               <div className="space-y-4 bg-indigo-50/50 border border-indigo-100/50 p-6 rounded-2xl relative overflow-hidden">
+                 <div className="absolute top-0 right-0 w-32 h-32 bg-indigo-500/5 rounded-full blur-[40px] pointer-events-none"></div>
+                 <h3 className="text-xs font-bold text-indigo-800 tracking-widest uppercase mb-4 opacity-80">Inspection Context</h3>
+                 <div className="grid grid-cols-1 md:grid-cols-3 gap-5 relative z-10">
                    <div>
-                      <label className="block text-sm font-semibold text-slate-700 mb-2">Shift <span className="text-rose-500">*</span></label>
+                      <label className="block text-[13px] font-bold text-slate-700 tracking-wide mb-2 uppercase">Shift <span className="text-rose-500">*</span></label>
                       <select 
                         required 
                         value={shift}
                         onChange={e => setShift(e.target.value as any)}
-                        className="w-full px-4 py-3 bg-white border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500/50 focus:border-indigo-500 transition-all font-medium text-slate-900 shadow-sm"
+                        className="w-full px-4 py-3.5 bg-white border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500/50 focus:border-indigo-500 transition-all font-medium text-slate-800 shadow-sm"
                       >
                         <option value="DAY">Day Shift</option>
                         <option value="NIGHT">Night Shift</option>
@@ -288,25 +298,25 @@ export default function PerformCheck({ onSaved, initialEqCode }: { onSaved?: () 
                       </select>
                    </div>
                    <div>
-                      <label className="block text-sm font-semibold text-slate-700 mb-2">Select Operator <span className="text-rose-500">*</span></label>
+                      <label className="block text-[13px] font-bold text-slate-700 tracking-wide mb-2 uppercase">Operator <span className="text-rose-500">*</span></label>
                       <select 
                         required 
                         value={operatorId}
                         onChange={e => setOperatorId(e.target.value)}
-                        className="w-full px-4 py-3 bg-white border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500/50 focus:border-indigo-500 transition-all font-medium text-slate-900 shadow-sm"
+                        className="w-full px-4 py-3.5 bg-white border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500/50 focus:border-indigo-500 transition-all font-medium text-slate-800 shadow-sm"
                       >
-                        <option value="">-- Employee ID --</option>
+                        <option value="">-- Select Identity --</option>
                         {operators.map(op => <option key={op.id} value={op.employeeId}>{op.name} ({op.employeeId})</option>)}
                         <option value="other">Other / Guest</option>
                       </select>
                    </div>
                    <div>
-                      <label className="block text-sm font-semibold text-slate-700 mb-2">Check Cycle <span className="text-rose-500">*</span></label>
+                      <label className="block text-[13px] font-bold text-slate-700 tracking-wide mb-2 uppercase">Check Cycle <span className="text-rose-500">*</span></label>
                       <select 
                         required 
                         value={checkType}
                         onChange={e => setCheckType(e.target.value)}
-                        className="w-full px-4 py-3 bg-white border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500/50 focus:border-indigo-500 transition-all font-medium text-slate-900 shadow-sm"
+                        className="w-full px-4 py-3.5 bg-white border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500/50 focus:border-indigo-500 transition-all font-medium text-slate-800 shadow-sm"
                       >
                         <option value="all">All Parameters</option>
                         <option value="daily">Daily Only</option>
@@ -316,87 +326,125 @@ export default function PerformCheck({ onSaved, initialEqCode }: { onSaved?: () 
                  </div>
                </div>
 
-               <div className="space-y-6">
+               <div className="space-y-8">
                   {filteredItems.length === 0 ? (
-                    <p className="text-slate-400 italic text-sm">No specific parameters configured for this equipment with the selected check cycle.</p>
+                    <div className="p-8 border-2 border-dashed border-slate-200 rounded-2xl flex flex-col items-center justify-center text-center bg-slate-50/50">
+                       <p className="text-slate-500 font-medium">No check parameters configured for this cycle.</p>
+                    </div>
                   ) : (
                     Array.from(new Set(filteredItems.map(i => i.category || 'General'))).map((category, catIdx) => (
-                      <div key={category} className="space-y-4">
-                        <h3 className="text-xs font-bold text-slate-700 tracking-widest uppercase border-b border-slate-200 pb-2 bg-slate-50/50 px-2 py-1.5 rounded">{category}</h3>
+                      <div key={category} className="space-y-5">
+                        <div className="flex items-center gap-3">
+                           <div className="h-px bg-slate-200 flex-1"></div>
+                           <h3 className="text-[11px] font-bold text-slate-500 tracking-[0.2em] uppercase bg-white px-2">{category}</h3>
+                           <div className="h-px bg-slate-200 flex-1"></div>
+                        </div>
                         
                         {filteredItems.filter(item => (item.category || 'General') === category).map((item, idx) => (
-                          <div key={item.id} className="bg-white border border-slate-200 p-5 rounded-2xl shadow-sm hover:border-indigo-100 transition-colors">
-                            <div className="flex flex-col sm:flex-row justify-between items-start mb-4 gap-2">
+                          <div key={item.id} className="bg-white border-2 border-slate-200/80 p-6 md:p-8 rounded-[1.5rem] shadow-sm hover:border-indigo-300 hover:shadow-lg transition-all duration-300 group relative overflow-hidden">
+                            <div className="absolute left-0 top-0 bottom-0 w-2.5 bg-slate-200 group-hover:bg-indigo-500 transition-colors duration-300"></div>
+                            <div className="flex flex-col sm:flex-row justify-between items-start mb-6 gap-4 pl-4">
                                <div>
-                                 <label className="flex items-center gap-2 text-sm md:text-base font-semibold text-slate-900 leading-snug">
-                                   {catIdx + 1}.{idx + 1} {item.name} 
-                                   <span className="text-[10px] uppercase font-bold tracking-wider px-1.5 py-0.5 rounded bg-indigo-50 text-indigo-600 border border-indigo-100">{item.frequency || 'N/A'}</span>
-                                   {item.isRequired && <span className="text-rose-500">*</span>}
+                                 <label className="flex flex-wrap items-center gap-2.5 text-base md:text-xl font-display font-bold text-slate-900 leading-snug">
+                                   <span className="text-indigo-500 font-mono text-sm border border-indigo-200 bg-indigo-50 px-2 py-0.5 rounded-lg shadow-sm"> {catIdx + 1}.{idx + 1} </span> 
+                                   {item.name} 
+                                   <span className="text-[10px] uppercase font-bold tracking-widest px-2.5 py-1 rounded-full bg-indigo-100 text-indigo-700 border border-indigo-200 shadow-sm ml-1">{item.frequency || 'N/A'}</span>
+                                   {item.isRequired && <span className="text-rose-500 font-bold ml-1">*</span>}
                                  </label>
-                                 {item.criteriaText && <p className="text-xs text-slate-500 font-medium mt-1">เกณฑ์: {item.criteriaText}</p>}
+                                 {item.criteriaText && <p className="text-sm text-slate-600 font-bold mt-3 sm:mt-2 sm:ml-[3.5rem] flex items-center gap-2">
+                                    <span className="opacity-70 uppercase tracking-widest text-[10px]">Criteria:</span> 
+                                    <span className="text-slate-800 bg-slate-100/80 px-3 py-1.5 rounded-lg border border-slate-200">{item.criteriaText}</span>
+                                 </p>}
                                </div>
                                {(item.type === 'numeric' && item.minValue !== undefined && item.maxValue !== undefined) && (
-                                 <span className="text-xs font-mono font-medium text-indigo-700 bg-indigo-50 px-2 py-1 rounded border border-indigo-100 whitespace-nowrap">LCL/UCL: {item.minValue} - {item.maxValue} {item.unit || ''}</span>
+                                 <div className="flex flex-col items-start sm:items-end shrink-0 pl-0 sm:pl-0 mt-4 sm:mt-0 w-full sm:w-auto bg-slate-50 sm:bg-transparent p-4 sm:p-0 rounded-xl sm:rounded-none border sm:border-0 border-slate-200">
+                                   <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-1.5">Acceptable Range</span>
+                                   <span className="text-sm md:text-base font-mono font-bold text-indigo-700 bg-indigo-50 px-3 md:px-4 py-2 rounded-xl border-2 border-indigo-200 shadow-sm whitespace-nowrap bg-white">{item.minValue} - {item.maxValue} <span className="text-indigo-400 font-bold ml-1">{item.unit || ''}</span></span>
+                                 </div>
                                )}
                             </div>
                             
-                            {item.type === 'boolean' ? (
-                              <div className="flex flex-col sm:flex-row gap-3">
-                                 <label className={cn(
-                                   "flex items-center gap-3 cursor-pointer p-4 border rounded-xl flex-1 transition-colors",
-                                   responses[item.id] === "true" ? "bg-emerald-50 border-emerald-500 text-emerald-900" : "bg-slate-50 border-slate-200 hover:bg-slate-100 text-slate-700"
-                                 )}>
-                                   <input type="radio" 
-                                     name={item.id} 
-                                     required={item.isRequired} 
-                                     value="true"
-                                     checked={responses[item.id] === "true"}
-                                     onChange={e => setResponses({...responses, [item.id]: e.target.value})}
-                                     className="w-5 h-5 text-emerald-600 focus:ring-emerald-500 border-slate-300 pointer-events-none"
-                                   />
-                                   <span className="text-sm md:text-base font-semibold">Pass / Normal {item.expectedBoolean === false && '(Unexpected)'}</span>
-                                 </label>
-                                 <label className={cn(
-                                   "flex items-center gap-3 cursor-pointer p-4 border rounded-xl flex-1 transition-colors",
-                                   responses[item.id] === "false" ? "bg-rose-50 border-rose-500 text-rose-900" : "bg-slate-50 border-slate-200 hover:bg-slate-100 text-slate-700"
-                                 )}>
-                                   <input type="radio" 
-                                     name={item.id} 
-                                     required={item.isRequired} 
-                                     value="false"
-                                     checked={responses[item.id] === "false"}
-                                     onChange={e => setResponses({...responses, [item.id]: e.target.value})}
-                                     className="w-5 h-5 text-rose-600 focus:ring-rose-500 border-slate-300 pointer-events-none"
-                                   />
-                                   <span className="text-sm md:text-base font-semibold">Fail / Abnormal {item.expectedBoolean === false && '(Expected)'}</span>
-                                 </label>
-                              </div>
-                            ) : (
-                              <div className="flex flex-col gap-3">
-                                <div className="flex items-center gap-3">
-                                   <input 
-                                     type="number" step="any"
-                                     required={item.isRequired}
-                                     value={responses[item.id] || ''}
-                                     onChange={e => setResponses({...responses, [item.id]: e.target.value})}
-                                     placeholder={`Enter ${item.unit || 'value'}`}
-                                     className="w-full sm:max-w-xs px-4 py-4 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500/50 focus:border-indigo-500 font-mono text-base font-medium shadow-inner"
-                                   />
-                                   {item.unit && <span className="font-semibold text-slate-500 bg-slate-100 px-3 py-2 rounded-lg">{item.unit}</span>}
+                            <div className="pl-4">
+                              {item.type === 'boolean' ? (
+                                <div className="flex flex-col sm:flex-row gap-4">
+                                   <label className={cn(
+                                     "flex items-center gap-4 cursor-pointer p-4 md:p-5 border-2 rounded-2xl flex-1 transition-all duration-300 relative overflow-hidden group/btn",
+                                     responses[item.id] === "true" ? "bg-emerald-50/80 border-emerald-500/80 text-emerald-900 shadow-[0_0_15px_rgba(16,185,129,0.15)] ring-1 ring-emerald-500/30" : "bg-slate-50/50 border-slate-200 hover:bg-slate-50 hover:border-slate-300 text-slate-700 hover:shadow-sm"
+                                   )}>
+                                     {responses[item.id] === "true" && <div className="absolute inset-0 bg-emerald-500/5 mix-blend-multiply"></div>}
+                                     <div className={cn(
+                                       "w-6 h-6 rounded-full border-2 flex items-center justify-center shrink-0 transition-colors z-10",
+                                       responses[item.id] === "true" ? "border-emerald-500 bg-emerald-500" : "border-slate-300 bg-white group-hover/btn:border-emerald-400"
+                                     )}>
+                                        {responses[item.id] === "true" && <CheckCircle className="w-4 h-4 text-white" />}
+                                     </div>
+                                     <input type="radio" 
+                                       name={item.id} 
+                                       required={item.isRequired} 
+                                       value="true"
+                                       checked={responses[item.id] === "true"}
+                                       onChange={e => setResponses({...responses, [item.id]: e.target.value})}
+                                       className="sr-only"
+                                     />
+                                     <span className="text-sm md:text-base font-bold tracking-wide z-10">Pass / Normal {item.expectedBoolean === false && <span className="text-xs font-normal text-slate-500">(Unexpected)</span>}</span>
+                                   </label>
+                                   <label className={cn(
+                                     "flex items-center gap-4 cursor-pointer p-4 md:p-5 border-2 rounded-2xl flex-1 transition-all duration-300 relative overflow-hidden group/btn",
+                                     responses[item.id] === "false" ? "bg-rose-50/80 border-rose-500/80 text-rose-900 shadow-[0_0_15px_rgba(244,63,94,0.15)] ring-1 ring-rose-500/30" : "bg-slate-50/50 border-slate-200 hover:bg-slate-50 hover:border-slate-300 text-slate-700 hover:shadow-sm"
+                                   )}>
+                                     {responses[item.id] === "false" && <div className="absolute inset-0 bg-rose-500/5 mix-blend-multiply"></div>}
+                                     <div className={cn(
+                                       "w-6 h-6 rounded-full border-2 flex items-center justify-center shrink-0 transition-colors z-10",
+                                       responses[item.id] === "false" ? "border-rose-500 bg-rose-500" : "border-slate-300 bg-white group-hover/btn:border-rose-400"
+                                     )}>
+                                        {responses[item.id] === "false" && <div className="w-2.5 h-2.5 rounded-full bg-white"></div>}
+                                     </div>
+                                     <input type="radio" 
+                                       name={item.id} 
+                                       required={item.isRequired} 
+                                       value="false"
+                                       checked={responses[item.id] === "false"}
+                                       onChange={e => setResponses({...responses, [item.id]: e.target.value})}
+                                       className="sr-only"
+                                     />
+                                     <span className="text-sm md:text-base font-bold tracking-wide z-10">Fail / Abnormal {item.expectedBoolean === false && <span className="text-xs font-normal text-slate-500">(Expected)</span>}</span>
+                                   </label>
                                 </div>
-                                {responses[item.id] !== undefined && responses[item.id] !== '' && item.minValue !== undefined && item.maxValue !== undefined && (
-                                   (Number(responses[item.id]) < item.minValue || Number(responses[item.id]) > item.maxValue) ? (
-                                       <p className="text-sm text-rose-600 font-medium bg-rose-50 border border-rose-100 px-3 py-2.5 rounded-lg flex items-center gap-2 mt-1 w-fit transition-all duration-300">
-                                          <AlertTriangle className="w-4 h-4 shrink-0" /> Value is OUT of control limits ({item.minValue} - {item.maxValue})
-                                       </p>
-                                   ) : (
-                                       <p className="text-sm text-emerald-600 font-medium bg-emerald-50 border border-emerald-100 px-3 py-2.5 rounded-lg flex items-center gap-2 mt-1 w-fit transition-all duration-300">
-                                          <CheckCircle className="w-4 h-4 shrink-0" /> Value is within control limits
-                                       </p>
-                                   )
-                                )}
-                              </div>
-                            )}
+                              ) : (
+                                <div className="flex flex-col gap-4">
+                                  <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
+                                     <div className="relative flex-1 max-w-[320px]">
+                                        <input 
+                                          type="number" step="any"
+                                          required={item.isRequired}
+                                          value={responses[item.id] || ''}
+                                          onChange={e => setResponses({...responses, [item.id]: e.target.value})}
+                                          placeholder={`Enter numeric value...`}
+                                          className="w-full pl-5 pr-12 py-4 bg-slate-50/80 border-2 border-slate-200 rounded-2xl focus:outline-none focus:ring-4 focus:ring-indigo-500/20 focus:border-indigo-500/80 hover:border-slate-300 font-mono text-lg font-semibold shadow-inner transition-all placeholder:font-sans placeholder:font-normal placeholder:text-base"
+                                        />
+                                        {item.unit && <div className="absolute right-4 top-1/2 -translate-y-1/2 flex items-center justify-center pointer-events-none text-slate-400 font-bold">{item.unit}</div>}
+                                     </div>
+                                     {responses[item.id] !== undefined && responses[item.id] !== '' && item.minValue !== undefined && item.maxValue !== undefined && (
+                                        (Number(responses[item.id]) < item.minValue || Number(responses[item.id]) > item.maxValue) ? (
+                                            <div className="text-sm text-rose-700 font-bold bg-rose-50 border border-rose-200 px-4 py-3 rounded-xl flex items-center gap-3 shadow-sm h-full animate-in fade-in slide-in-from-left-2">
+                                               <div className="w-8 h-8 rounded-full bg-rose-100 flex items-center justify-center shrink-0">
+                                                 <AlertTriangle className="w-4 h-4 text-rose-600" /> 
+                                               </div>
+                                               OUT of limits
+                                            </div>
+                                        ) : (
+                                            <div className="text-sm text-emerald-700 font-bold bg-emerald-50 border border-emerald-200 px-4 py-3 rounded-xl flex items-center gap-3 shadow-sm h-full animate-in fade-in slide-in-from-left-2">
+                                               <div className="w-8 h-8 rounded-full bg-emerald-100 flex items-center justify-center shrink-0">
+                                                  <CheckCircle className="w-4 h-4 text-emerald-600" />
+                                               </div>
+                                               Within limits
+                                            </div>
+                                        )
+                                     )}
+                                  </div>
+                                </div>
+                              )}
+                            </div>
                           </div>
                         ))}
                       </div>
