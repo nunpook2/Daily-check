@@ -235,6 +235,13 @@ export default function Settings() {
   const handleAddEq = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newEqName || !newEqCode) return;
+    
+    // Check for duplicate code
+    if (equipments.some(eq => eq.code.toLowerCase() === newEqCode.toLowerCase())) {
+      alert("An equipment with this code already exists. Please use a unique code.");
+      return;
+    }
+
     await addEquipment({
       name: newEqName,
       code: newEqCode,
@@ -258,7 +265,14 @@ export default function Settings() {
   };
 
   const handleSaveEditEq = async (id: string) => {
-    if (!editingEqData.name) return;
+    if (!editingEqData.name || !editingEqData.code) return;
+    
+    // Check for duplicate code (exclude self)
+    if (equipments.some(eq => eq.id !== id && eq.code.toLowerCase() === editingEqData.code?.toLowerCase())) {
+      alert("Another equipment with this code already exists. Please use a unique code.");
+      return;
+    }
+
     await updateEquipment(id, editingEqData);
     setEditingEqId(null);
     await loadData();
@@ -357,31 +371,31 @@ export default function Settings() {
         </div>
       </div>
 
-      <div className="flex gap-2 border-b border-slate-200 overflow-x-auto scroolbar-hide pb-2">
+      <div className="flex gap-2 border-b border-slate-200 overflow-x-auto custom-scrollbar pb-2">
         <button 
           onClick={() => setActiveTab('equipment')}
-          className={cn("px-5 py-3 rounded-t-xl font-bold text-sm flex items-center gap-2.5 transition-all duration-300 whitespace-nowrap outline-none", 
+          className={cn("px-4 sm:px-5 py-2.5 sm:py-3 rounded-t-xl font-bold text-xs sm:text-sm flex items-center gap-2 transition-all duration-300 whitespace-nowrap outline-none", 
             activeTab === 'equipment' ? "bg-white border-b-2 border-indigo-600 text-indigo-700 shadow-[0_-4px_10px_rgba(0,0,0,0.02)]" : "border-b-2 border-transparent text-slate-500 hover:text-slate-900 hover:bg-white/50")}
         >
           <MonitorSmartphone className="w-4 h-4" /> 1. Register Equipment
         </button>
         <button 
           onClick={() => setActiveTab('parameters')}
-          className={cn("px-5 py-3 rounded-t-xl font-bold text-sm flex items-center gap-2.5 transition-all duration-300 whitespace-nowrap outline-none", 
+          className={cn("px-4 sm:px-5 py-2.5 sm:py-3 rounded-t-xl font-bold text-xs sm:text-sm flex items-center gap-2 transition-all duration-300 whitespace-nowrap outline-none", 
             activeTab === 'parameters' ? "bg-white border-b-2 border-indigo-600 text-indigo-700 shadow-[0_-4px_10px_rgba(0,0,0,0.02)]" : "border-b-2 border-transparent text-slate-500 hover:text-slate-900 hover:bg-white/50")}
         >
           <ListChecks className="w-4 h-4" /> 2. Control Parameters
         </button>
         <button 
           onClick={() => setActiveTab('qrcodes')}
-          className={cn("px-5 py-3 rounded-t-xl font-bold text-sm flex items-center gap-2.5 transition-all duration-300 whitespace-nowrap outline-none", 
+          className={cn("px-4 sm:px-5 py-2.5 sm:py-3 rounded-t-xl font-bold text-xs sm:text-sm flex items-center gap-2 transition-all duration-300 whitespace-nowrap outline-none", 
             activeTab === 'qrcodes' ? "bg-white border-b-2 border-indigo-600 text-indigo-700 shadow-[0_-4px_10px_rgba(0,0,0,0.02)]" : "border-b-2 border-transparent text-slate-500 hover:text-slate-900 hover:bg-white/50")}
         >
           <QrCode className="w-4 h-4" /> 3. QR Codes
         </button>
         <button 
           onClick={() => setActiveTab('operators')}
-          className={cn("px-5 py-3 rounded-t-xl font-bold text-sm flex items-center gap-2.5 transition-all duration-300 whitespace-nowrap outline-none", 
+          className={cn("px-4 sm:px-5 py-2.5 sm:py-3 rounded-t-xl font-bold text-xs sm:text-sm flex items-center gap-2 transition-all duration-300 whitespace-nowrap outline-none", 
             activeTab === 'operators' ? "bg-white border-b-2 border-indigo-600 text-indigo-700 shadow-[0_-4px_10px_rgba(0,0,0,0.02)]" : "border-b-2 border-transparent text-slate-500 hover:text-slate-900 hover:bg-white/50")}
         >
           <Users className="w-4 h-4" /> 4. Personnel
@@ -392,11 +406,11 @@ export default function Settings() {
         key={activeTab} 
         initial={{ opacity: 0, y: 10 }}
         animate={{ opacity: 1, y: 0 }}
-        className="grid grid-cols-1 lg:grid-cols-2 gap-6"
+        className="grid grid-cols-1 xl:grid-cols-2 gap-4 sm:gap-6"
       >
         {activeTab === 'operators' && (
           <>
-            <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-6 space-y-4 h-fit">
+            <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-4 sm:p-6 space-y-4 h-fit">
               <h2 className="text-lg font-semibold text-slate-900 border-b border-slate-100 pb-2">Add New Operator</h2>
               <form onSubmit={handleAddOperator} className="space-y-4">
                  <div>
@@ -415,7 +429,7 @@ export default function Settings() {
               </form>
             </div>
             
-            <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-6 space-y-4">
+            <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-4 sm:p-6 space-y-4">
               <h2 className="text-lg font-semibold text-slate-900 border-b border-slate-100 pb-2">Operator Roster</h2>
               <ul className="divide-y divide-slate-100">
                 {operators.map(op => (
@@ -466,8 +480,8 @@ export default function Settings() {
         )}
 
         {activeTab === 'equipment' && (
-          <div className="lg:col-span-2">
-            <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-6 space-y-4 max-w-3xl">
+          <div className="xl:col-span-2">
+            <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-4 sm:p-6 space-y-4 max-w-3xl mx-auto xl:mx-0">
               <h2 className="text-lg font-semibold text-slate-900 border-b border-slate-100 pb-2">Register Equipment</h2>
               <form onSubmit={handleAddEq} className="space-y-4">
                  <div className="grid grid-cols-2 gap-4">
@@ -492,15 +506,15 @@ export default function Settings() {
                              className="w-full px-3 py-2 border border-slate-200 rounded-lg" />
                    </div>
                  </div>
-                 <button type="submit" className="flex items-center gap-2 px-6 py-2.5 bg-indigo-600 text-white font-medium rounded-lg hover:bg-indigo-700">
+                 <button type="submit" className="flex items-center gap-2 px-6 py-2.5 bg-indigo-600 text-white font-bold rounded-lg hover:bg-indigo-700">
                     <Plus className="w-4 h-4" /> Save Equipment
                  </button>
               </form>
             </div>
 
             {equipments.length > 0 && (
-               <div className="bg-white rounded-xl shadow-sm border border-slate-200 mt-6 max-w-3xl">
-                  <div className="p-4 border-b border-slate-100 font-semibold text-slate-800">
+               <div className="bg-white rounded-2xl shadow-sm border border-slate-200 mt-6 max-w-3xl mx-auto xl:mx-0 overflow-hidden">
+                  <div className="p-4 sm:p-6 border-b border-slate-100 font-semibold text-slate-800">
                      Registered Equipment
                   </div>
                   <ul className="divide-y divide-slate-100">
@@ -572,7 +586,7 @@ export default function Settings() {
         )}
 
         {activeTab === 'parameters' && (
-          <div className="lg:col-span-2 bg-white rounded-xl shadow-sm border border-slate-200 p-6 space-y-6">
+          <div className="xl:col-span-2 bg-white rounded-2xl shadow-sm border border-slate-200 p-4 sm:p-6 space-y-6">
             <div className="flex flex-col md:flex-row justify-between items-start md:items-end gap-4 border-b border-slate-100 pb-4">
               <div>
                 <h2 className="text-lg font-semibold text-slate-900 leading-tight">Add Control Parameters</h2>
@@ -683,13 +697,13 @@ export default function Settings() {
         )}
 
         {activeTab === 'qrcodes' && (
-          <div className="lg:col-span-2 space-y-6">
-            <div className="bg-indigo-50 border border-indigo-100 p-5 rounded-2xl flex gap-4 text-indigo-900 items-start">
-               <div className="bg-white p-2 rounded-xl shrink-0 shadow-sm">
+          <div className="xl:col-span-2 space-y-6">
+            <div className="bg-indigo-50 border border-indigo-100 p-4 sm:p-5 rounded-2xl flex gap-4 text-indigo-900 items-start">
+               <div className="bg-white p-2 rounded-xl shrink-0 shadow-sm hidden sm:block">
                   <Info className="w-6 h-6 text-indigo-600" />
                </div>
                <div className="text-sm pt-0.5">
-                  <h3 className="font-bold text-base text-indigo-800 mb-1">Equipment QR Code Information</h3>
+                  <h3 className="font-bold text-base text-indigo-800 mb-1 flex items-center gap-2"><Info className="w-5 h-5 text-indigo-600 sm:hidden" /> Equipment QR Code Information</h3>
                   <ul className="list-disc list-inside space-y-1.5 opacity-90 mt-2 text-indigo-800/80">
                     <li><strong>No Usage Limits:</strong> QR Codes encode a direct URL to the App scan page and never expire. You can scan them indefinitely.</li>
                     <li><strong>Anti-Fraud (Pencil Whipping) Active:</strong> Operators must physically be at the machine to scan the QR code to unlock the checklist.</li>
@@ -699,7 +713,7 @@ export default function Settings() {
                </div>
             </div>
 
-            <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-6">
+            <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-4 sm:p-6">
               <h2 className="text-lg font-semibold text-slate-900 border-b border-slate-100 pb-2 mb-4">Print Equipment QR Labels</h2>
               <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
                 {equipments.map(eq => (
@@ -752,7 +766,7 @@ export default function Settings() {
               <div className="p-8 flex flex-col items-center justify-center bg-white space-y-6">
                 <div className="p-4 bg-white border-2 border-slate-100 rounded-xl shadow-sm">
                   <QRCodeSVG 
-                    value={`${window.location.origin}${window.location.pathname}?eqCode=${encodeURIComponent(qrModalEq.code)}`} 
+                    value={`${window.location.origin}${window.location.pathname}?eqCode=${encodeURIComponent(qrModalEq.id)}`} 
                     size={200}
                     level="H"
                     includeMargin={false}

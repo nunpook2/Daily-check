@@ -11,6 +11,9 @@ export default function OocLogs() {
   const [logs, setLogs] = useState<CheckLog[]>([]);
   const [loading, setLoading] = useState(true);
   
+  const [filterDate, setFilterDate] = useState<string>(format(new Date(), 'yyyy-MM-dd'));
+  const [selectedEqIdFilter, setSelectedEqIdFilter] = useState<string | null>(null);
+
   const [selectedLog, setSelectedLog] = useState<CheckLog | null>(null);
   const [logItems, setLogItems] = useState<CheckItem[]>([]);
   const [logEq, setLogEq] = useState<Equipment | null>(null);
@@ -20,18 +23,28 @@ export default function OocLogs() {
   const [confirmDelete, setConfirmDelete] = useState(false);
 
   useEffect(() => {
-    loadData();
-  }, []);
+    loadData(filterDate);
+  }, [filterDate]);
 
-  const loadData = async () => {
+  const loadData = async (dateStr: string) => {
     setLoading(true);
-    const today = format(new Date(), 'yyyy-MM-dd');
     const [eqData, logsData] = await Promise.all([
       fetchEquipments(),
-      fetchLogs(today) // Note: ideally we might want to fetch all OOC logs, but for now we fetch today's
+      fetchLogs(dateStr)
     ]);
     setEquipments(eqData);
     setLogs(logsData);
+    
+    // Automatically select the first equipment with logs if none is selected
+    if (logsData.length > 0) {
+       const firstEq = logsData[0].equipmentId;
+       if (!selectedEqIdFilter || !logsData.some(l => l.equipmentId === selectedEqIdFilter)) {
+          setSelectedEqIdFilter(firstEq);
+       }
+    } else {
+       setSelectedEqIdFilter(null);
+    }
+    
     setLoading(false);
   };
 
@@ -89,64 +102,120 @@ export default function OocLogs() {
   });
 
   return (
-    <div className="space-y-6 relative max-w-4xl mx-auto">
-       <div className="flex justify-between items-end mb-6">
+    <div className="relative w-full mx-auto h-[calc(100vh-180px)] md:h-[calc(100vh-160px)] flex flex-col">
+       <div className="flex flex-col md:flex-row justify-between items-start md:items-end mb-4 md:mb-6 shrink-0 gap-3 md:gap-4">
          <div>
-           <h1 className="text-3xl font-bold tracking-tight text-slate-900">Inspection History</h1>
-           <p className="text-slate-500 mt-1">Review all inspection records and update statuses.</p>
+           <h1 className="text-4xl font-display font-bold tracking-tight text-slate-900 drop-shadow-sm">Inspection History</h1>
+           <p className="text-slate-500 mt-1.5 font-medium">Review all inspection records and update statuses.</p>
+         </div>
+         <div className="flex items-center gap-3 bg-white/80 backdrop-blur-md border border-slate-200/80 px-4 py-2.5 rounded-2xl shadow-sm">
+           <div>
+             <p className="text-[10px] font-bold tracking-wider uppercase text-indigo-500 mb-0.5">Filter Date</p>
+             <input 
+                type="date" 
+                value={filterDate}
+                onChange={(e) => setFilterDate(e.target.value)}
+                max={format(new Date(), 'yyyy-MM-dd')}
+                className="text-base font-display font-bold text-slate-800 bg-transparent border-none p-0 focus:ring-0 cursor-pointer outline-none w-[130px]"
+             />
+           </div>
          </div>
        </div>
 
-       <div className="space-y-6">
+       <div className="flex-1 flex flex-row gap-3 md:gap-6 min-h-0">
           {Object.keys(logsByEquipment).length === 0 ? (
-             <div className="p-16 flex flex-col items-center justify-center text-center text-slate-400 bg-white shadow-sm border border-slate-200 rounded-xl">
-               <CheckCircle className="w-12 h-12 text-slate-300 mb-4" />
-               <p className="text-lg font-medium text-slate-600">No Records Found</p>
-               <p className="text-sm mt-1">No inspections recorded today.</p>
+             <div className="flex-1 p-16 flex flex-col items-center justify-center text-center text-slate-400 bg-white shadow-sm border border-slate-200 rounded-3xl">
+               <CheckCircle className="w-16 h-16 text-slate-200 mb-4" />
+               <p className="text-2xl font-display font-bold text-slate-600">No Records Found</p>
+               <p className="text-base mt-2 font-medium text-slate-500">No inspections recorded for {format(new Date(filterDate), 'dd MMM yyyy')}.</p>
              </div>
           ) : (
-             Object.entries(logsByEquipment).map(([eqId, eqLogs]) => {
-                const eqRef = equipments.find(e => e.id === eqId);
-                return (
-                   <div key={eqId} className="shadow-sm border border-slate-200 rounded-xl bg-white overflow-hidden">
-                       <div className="px-5 py-3 bg-slate-50 border-b border-slate-200 flex justify-between items-center">
-                           <h2 className="font-bold text-slate-800 tracking-tight">{eqRef?.name || 'Unknown Equipment'} <span className="font-mono text-slate-500 font-normal text-sm ml-2">{eqRef?.code}</span></h2>
-                           <span className="text-xs font-semibold bg-slate-200 text-slate-700 px-2 py-1 rounded-full">{eqLogs.length} Records</span>
+             <>
+                {/* Left side: Equipment Selector */}
+                <div className="w-28 sm:w-64 lg:w-80 shrink-0 flex flex-col gap-2 sm:gap-3 overflow-y-auto custom-scrollbar pr-1 sm:pr-2 h-full">
+                   {Object.entries(logsByEquipment).map(([eqId, eqLogs]) => {
+                      const eqRef = equipments.find(e => e.id === eqId);
+                      const isSelected = selectedEqIdFilter === eqId;
+                      return (
+                         <button 
+                            key={eqId}
+                            onClick={() => setSelectedEqIdFilter(eqId)}
+                            className={cn(
+                               "text-left p-2.5 sm:p-4 rounded-xl sm:rounded-2xl border-2 transition-all duration-300 min-w-0 shrink-0 flex-col flex",
+                               isSelected ? "bg-indigo-600 border-indigo-700 shadow-md transform sm:scale-[1.02]" : "bg-white border-slate-200 hover:border-indigo-300 hover:bg-slate-50"
+                            )}
+                         >
+                            <div className="flex flex-col sm:flex-row justify-between items-start w-full gap-1 sm:gap-0">
+                               <h3 className={cn("font-display font-bold text-xs sm:text-base truncate w-full sm:pr-2", isSelected ? "text-white" : "text-slate-900")} title={eqRef?.name || 'Unknown'}>
+                                  {eqRef?.name || 'Unknown'}
+                               </h3>
+                               <span className={cn("text-[9px] sm:text-[10px] font-bold px-1.5 sm:px-2.5 py-0.5 sm:py-1 rounded-md sm:rounded-lg shrink-0 border self-start", isSelected ? "bg-indigo-700/50 border-indigo-500 text-indigo-100" : "bg-slate-100 border-slate-200 text-slate-500")}>
+                                  {eqLogs.length} {eqLogs.length === 1 ? 'Log' : 'Logs'}
+                               </span>
+                            </div>
+                            <p className={cn("font-mono text-[9px] sm:text-xs font-bold tracking-wider mt-1 sm:mt-1 truncate w-full", isSelected ? "text-indigo-200" : "text-indigo-500")}>
+                               {eqRef?.code}
+                            </p>
+                         </button>
+                      );
+                   })}
+                </div>
+
+                {/* Right side / Bottom list: Logs */}
+                {selectedEqIdFilter && logsByEquipment[selectedEqIdFilter] && (
+                   <div className="flex-1 shadow-sm border border-slate-200/60 rounded-3xl bg-white overflow-hidden flex flex-col min-h-0">
+                       <div className="px-6 py-5 bg-gradient-to-r from-slate-900 to-slate-800 border-b border-slate-800 flex justify-between items-center shrink-0">
+                           <div>
+                              <h2 className="font-display font-bold text-white tracking-tight text-xl drop-shadow-sm">
+                                {equipments.find(e => e.id === selectedEqIdFilter)?.name || 'Unknown Equipment'}
+                              </h2>
+                              <p className="font-mono text-indigo-300 font-bold text-sm tracking-wider mt-0.5">
+                                {equipments.find(e => e.id === selectedEqIdFilter)?.code}
+                              </p>
+                           </div>
                        </div>
-                       <div className="divide-y divide-slate-100">
-                          {eqLogs.map(log => {
+                       <div className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-4 bg-slate-50/50 custom-scrollbar">
+                          {logsByEquipment[selectedEqIdFilter].map(log => {
                             const isPassed = log.status === 'passed';
                             return (
                                 <div key={log.id} 
-                                   className={cn("p-5 border-l-4 cursor-pointer transition-colors",
-                                      isPassed ? "border-emerald-500 bg-white hover:bg-slate-50" : "border-rose-500 bg-rose-50/20 hover:bg-rose-50/60"
+                                   className={cn("p-4 rounded-xl border-2 cursor-pointer transition-all duration-300 group hover:shadow-md relative overflow-hidden bg-white",
+                                      isPassed ? "border-emerald-100 hover:border-emerald-300" : "border-rose-200 hover:border-rose-400"
                                    )} 
                                    onClick={() => handleOpenLog(log)}
                                 >
-                                  <div className="flex justify-between items-start mb-2">
-                                    <div className="flex items-center gap-2">
-                                       <p className="font-bold text-slate-900 text-base">Shift: {log.shift}</p>
-                                       <span className={cn("px-2 py-0.5 rounded text-xs font-bold uppercase", 
-                                          isPassed ? "bg-emerald-100 text-emerald-700" : "bg-rose-100 text-rose-700"
-                                       )}>
-                                          {isPassed ? 'Passed' : 'Action Req.'}
-                                       </span>
+                                  <div className={cn("absolute left-0 top-0 bottom-0 w-1.5 transition-colors duration-300", 
+                                     isPassed ? "bg-emerald-400 group-hover:bg-emerald-500" : "bg-rose-500 group-hover:bg-rose-600"
+                                  )}></div>
+                                  <div className="flex justify-between items-start mb-3 pl-2 sm:pl-3">
+                                    <div className="flex flex-col gap-2">
+                                       <div className="flex flex-wrap items-center gap-2">
+                                         <span className={cn("px-2.5 py-1 rounded-lg text-[10px] font-bold uppercase tracking-wider shadow-sm", 
+                                            isPassed ? "bg-emerald-500 text-white" : "bg-rose-500 text-white"
+                                         )}>
+                                            {isPassed ? 'Passed' : 'Action Req.'}
+                                         </span>
+                                         <span className="font-bold text-slate-700 text-xs bg-slate-100 px-2.5 py-1 rounded-lg border border-slate-200">Shift: {log.shift}</span>
+                                         <span className="font-bold text-slate-500 text-xs bg-white px-2.5 py-1 rounded-lg border border-slate-100 shadow-sm">{format(log.timestamp, 'HH:mm')}</span>
+                                       </div>
                                     </div>
-                                    <span className="text-sm text-slate-700 font-bold">{format(log.timestamp, 'dd MMM yyyy, HH:mm')}</span>
+                                    <span className="text-[11px] text-slate-400 font-bold bg-slate-50 border border-slate-100 px-2 py-1 rounded-lg hidden sm:block">Op: {log.operatorName}</span>
                                   </div>
-                                  <p className="text-sm font-bold text-slate-600 mb-3">Operator: <span className="text-slate-800">{log.operatorName}</span></p>
-                                  <p className={cn("text-sm font-bold p-3 rounded-lg leading-relaxed border", 
-                                     isPassed ? "text-slate-700 bg-slate-50 border-slate-200" : "text-rose-700 bg-rose-100/50 border-rose-200/50"
-                                  )}>
-                                    {log.notes || (isPassed ? 'All parameters normal' : 'Values out of control limits.')}
-                                  </p>
+                                  <div className="pl-2 sm:pl-3 mt-3">
+                                    <p className="text-[11px] font-bold text-slate-400 mb-1.5 uppercase tracking-wider sm:hidden">Op: <span className="text-slate-700">{log.operatorName}</span></p>
+                                    <p className={cn("text-xs font-bold p-3 sm:p-4 rounded-xl leading-relaxed border shadow-inner", 
+                                       isPassed ? "text-slate-600 bg-slate-50/80 border-slate-200" : "text-rose-700 bg-rose-50 border-rose-200"
+                                    )}>
+                                      {log.notes || (isPassed ? 'All parameters normal' : 'Values out of control limits.')}
+                                    </p>
+                                  </div>
                                 </div>
                             );
                           })}
                        </div>
                    </div>
-                );
-             })
+                )}
+             </>
           )}
        </div>
 

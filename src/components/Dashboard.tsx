@@ -31,36 +31,46 @@ export default function Dashboard() {
   const [historyLogs, setHistoryLogs] = useState<CheckLog[]>([]);
   const [historyDateFilter, setHistoryDateFilter] = useState<string>('');
 
+  const [dashboardDate, setDashboardDate] = useState<string>(format(new Date(), 'yyyy-MM-dd'));
   const [latestLogsByEq, setLatestLogsByEq] = useState<Record<string, CheckLog>>({});
 
   useEffect(() => {
-    loadData();
-  }, []);
+    loadData(dashboardDate);
+  }, [dashboardDate]);
 
-  const loadData = async () => {
+  const loadData = async (dateStr: string) => {
     setLoading(true);
-    const today = format(new Date(), 'yyyy-MM-dd');
-    const [eqData, todayLogsData, itemsData] = await Promise.all([
+    const [eqData, dateLogsData, itemsData] = await Promise.all([
       fetchEquipments(),
-      fetchLogs(today),
+      fetchLogs(dateStr),
       fetchCheckItems()
     ]);
     
-    // Fetch the absolute latest log for each active equipment
+    // Fetch the absolute latest log for each active equipment for OOC alert metric
+    // Actually, if we are viewing a past date, OOC should probably reflect that date, but let's keep latest if it's general.
+    // Wait, the user said "หน้าตาสถานะทุกเครื่องจะแสดงให้ดูเหมือนวันปัจจุบัน" (Status of all machines will look like the current day)
+    // So the latest log should probably be the latest log UP TO that date. But `fetchLogs(dateStr)` gets the logs exactly ON that date.
     const activeEqs = eqData.filter(e => e.status === 'active');
     const latestLogsRecord: Record<string, CheckLog> = {};
     
+    // For simplicity, OOC metric will be based on the logs fetched for `dateStr`
+    // Actually, "Active Alerts (OOC)" is currently based on absolute latest logs.
+    // Let's modify it so if we select a past date, we get the latest log ON OR BEFORE that date. 
+    // Since fetchEquipmentLogs just returns all logs sorted by desc, we can find the first log where format(timestamp, 'yyyy-MM-dd') <= dateStr.
     await Promise.all(activeEqs.map(async (eq) => {
        const eqLogs = await fetchEquipmentLogs(eq.id!);
        if (eqLogs && eqLogs.length > 0) {
-          latestLogsRecord[eq.id!] = eqLogs[0];
+          const relevantLog = eqLogs.find(l => format(l.timestamp, 'yyyy-MM-dd') <= dateStr);
+          if (relevantLog) {
+             latestLogsRecord[eq.id!] = relevantLog;
+          }
        }
     }));
 
     setLatestLogsByEq(latestLogsRecord);
     setEquipments(eqData);
     setCheckItems(itemsData);
-    setLogs(todayLogsData);
+    setLogs(dateLogsData);
     setLoading(false);
   };
 
@@ -68,9 +78,9 @@ export default function Dashboard() {
     setSeeding(true);
     const success = await seedDummyData();
     if (success) {
-      await loadData();
+      await loadData(dashboardDate);
     } else {
-      await loadData();
+      await loadData(dashboardDate);
     }
     setSeeding(false);
   };
@@ -152,9 +162,26 @@ export default function Dashboard() {
           <h1 className="text-4xl font-display font-bold tracking-tight text-slate-900 drop-shadow-sm">Live Dashboard</h1>
           <p className="text-slate-500 mt-1.5 font-medium">Real-time equipment readiness & compliance.</p>
         </div>
-        <div className="text-left md:text-right bg-white/60 backdrop-blur border border-slate-200/60 px-5 py-3 rounded-2xl shadow-sm">
-           <p className="text-[11px] font-bold tracking-wider uppercase text-indigo-500">System Time / Today</p>
-           <p className="text-xl font-display font-bold text-slate-800">{format(new Date(), 'dd MMM yyyy')}</p>
+        <div className="flex items-center gap-3 bg-white/80 backdrop-blur-md border border-slate-200/80 px-4 py-2.5 rounded-2xl shadow-sm">
+           <div>
+             <p className="text-[10px] font-bold tracking-wider uppercase text-indigo-500 mb-0.5">Filter Date</p>
+             <input 
+                type="date" 
+                value={dashboardDate}
+                onChange={(e) => setDashboardDate(e.target.value)}
+                max={format(new Date(), 'yyyy-MM-dd')}
+                className="text-base font-display font-bold text-slate-800 bg-transparent border-none p-0 focus:ring-0 cursor-pointer outline-none w-[130px]"
+             />
+           </div>
+           {dashboardDate !== format(new Date(), 'yyyy-MM-dd') && (
+              <button 
+                onClick={() => setDashboardDate(format(new Date(), 'yyyy-MM-dd'))}
+                className="p-1.5 bg-indigo-50 text-indigo-600 rounded-lg hover:bg-indigo-100 transition-colors ml-2"
+                title="Reset to Today"
+              >
+                <RefreshCcw className="w-4 h-4" />
+              </button>
+           )}
         </div>
       </div>
 
@@ -162,40 +189,40 @@ export default function Dashboard() {
         <MetricCard 
           title="Inspection Progress" 
           value={`${complianceRate}%`} 
-          subtitle={`${checkedCount} of ${dailyOrShiftEquipments.length} machines checked`}
-          icon={<Activity className="w-6 h-6 text-emerald-600" />}
+          subtitle={`${checkedCount} of ${dailyOrShiftEquipments.length} checked`}
+          icon={<Activity className="w-5 h-5 sm:w-6 sm:h-6 text-emerald-600" />}
           trend={complianceRate === 100 ? 'positive' : 'neutral'}
         />
         <MetricCard 
-          title="Pending Inspections" 
+          title="Pending" 
           value={pendingCount} 
-          subtitle="Awaiting operator validation today"
-          icon={<Clock className="w-6 h-6 text-amber-500" />}
+          subtitle="Awaiting validation"
+          icon={<Clock className="w-5 h-5 sm:w-6 sm:h-6 text-amber-500" />}
           trend={pendingCount > 0 ? 'warning' : 'positive'}
         />
         <MetricCard 
-          title="Active Alerts (OOC)" 
+          title="Active Alerts" 
           value={currentOocCount} 
-          subtitle="Currently requiring action / failed"
-          icon={<AlertTriangle className={cn("w-6 h-6", currentOocCount > 0 ? "text-rose-500" : "text-slate-400")} />}
+          subtitle="Require action"
+          icon={<AlertTriangle className={cn("w-5 h-5 sm:w-6 sm:h-6", currentOocCount > 0 ? "text-rose-500" : "text-slate-400")} />}
           trend={currentOocCount > 0 ? 'negative' : 'positive'}
         />
         <MetricCard 
-          title="Total Equipment" 
+          title="Equipment" 
           value={activeEquipments.length} 
-          subtitle="Active equipment in system"
-          icon={<ServerCrash className="w-6 h-6 text-indigo-500" />}
+          subtitle="Active in system"
+          icon={<ServerCrash className="w-5 h-5 sm:w-6 sm:h-6 text-indigo-500" />}
           trend="neutral"
         />
       </div>
 
-      <div className="shadow-sm border border-slate-200/60 rounded-3xl bg-white/80 backdrop-blur-md overflow-hidden p-6 md:p-8 relative">
-         <div className="absolute top-0 right-0 w-[500px] h-[500px] bg-indigo-500/5 rounded-full blur-[100px] -translate-y-1/2 translate-x-1/3 pointer-events-none"></div>
-         <div className="flex justify-between items-center mb-6 relative z-10">
-           <h2 className="text-xl font-display font-bold text-slate-900 tracking-tight">Equipment Overview Tracker</h2>
+      <div className="shadow-sm border border-slate-200/60 rounded-2xl sm:rounded-3xl bg-white/80 backdrop-blur-md overflow-hidden p-4 sm:p-6 md:p-8 relative">
+         <div className="absolute top-0 right-0 w-[300px] sm:w-[500px] h-[300px] sm:h-[500px] bg-indigo-500/5 rounded-full blur-[80px] sm:blur-[100px] -translate-y-1/2 translate-x-1/3 pointer-events-none"></div>
+         <div className="flex justify-between items-center mb-4 sm:mb-6 relative z-10">
+           <h2 className="text-lg sm:text-xl font-display font-bold text-slate-900 tracking-tight">Equipment Overview Tracker</h2>
          </div>
          
-         <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4 relative z-10">
+         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3 sm:gap-4 relative z-10">
            {equipments.filter(e => e.status === 'active').map(eq => {
              const eqLogsToday = logs.filter(l => l.equipmentId === eq.id);
              const eqItems = checkItems.filter(item => item.equipmentId === eq.id);
@@ -220,32 +247,36 @@ export default function Dashboard() {
                <div 
                   key={eq.id} 
                   onClick={() => handleViewHistory(eq)}
-                  className="p-5 border rounded-2xl cursor-pointer transition-all duration-300 hover:shadow-lg hover:-translate-y-1 flex flex-col items-center justify-center text-center bg-white border-slate-200/80 group"
+                  className="p-3 sm:p-4 border rounded-2xl cursor-pointer transition-all duration-300 hover:shadow-md hover:-translate-y-0.5 flex flex-row items-center justify-between bg-white border-slate-200/80 group"
                >
-                  <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-slate-50 to-slate-100 shadow-inner border border-slate-200/50 flex items-center justify-center mb-3 group-hover:scale-110 transition-transform duration-300">
-                     <ServerCrash className="w-6 h-6 text-slate-500" />
+                  <div className="flex items-center gap-3 sm:gap-4 flex-1 min-w-0 pr-3">
+                     <div className="w-10 h-10 sm:w-12 sm:h-12 shrink-0 rounded-[0.85rem] bg-gradient-to-br from-slate-50 to-slate-100 shadow-[inset_0_1px_3px_rgba(0,0,0,0.05)] border border-slate-200/50 flex items-center justify-center group-hover:scale-105 transition-transform duration-300">
+                        <ServerCrash className="w-5 h-5 sm:w-6 sm:h-6 text-slate-400 group-hover:text-indigo-500 transition-colors" />
+                     </div>
+                     <div className="flex-1 min-w-0">
+                        <h3 className="font-display font-bold text-slate-800 text-sm sm:text-base truncate w-full group-hover:text-indigo-900 transition-colors" title={eq.name}>{eq.name}</h3>
+                        <p className="text-[10px] sm:text-xs text-indigo-400/80 font-mono font-bold tracking-widest mt-0.5 truncate uppercase">{eq.code}</p>
+                     </div>
                   </div>
-                  <h3 className="font-display font-bold text-slate-900 text-sm line-clamp-1 w-full" title={eq.name}>{eq.name}</h3>
-                  <p className="text-[11px] text-indigo-400 font-mono font-medium tracking-wide mt-1">{eq.code}</p>
                   
-                  <div className="mt-4 flex flex-col gap-2 w-full">
+                  <div className="flex flex-col gap-1.5 shrink-0">
                      {hasDailyItems && (
-                        <div className={cn("px-2.5 py-1.5 rounded-lg border text-[10px] font-bold uppercase tracking-wider flex items-center justify-center w-full transition-colors",
-                           dailyStatus === 'passed' ? "bg-emerald-50/80 border-emerald-200 text-emerald-700" :
-                           (dailyStatus === 'failed' || dailyStatus === 'needs_attention') ? "bg-rose-50/80 border-rose-200 text-rose-700" :
-                           "bg-indigo-600 border-indigo-700 text-white shadow-sm"
+                        <div className={cn("px-2.5 py-1 sm:py-1.5 rounded-lg border text-[9px] sm:text-[10px] font-extrabold uppercase tracking-widest flex items-center justify-center w-20 sm:w-24 transition-all shadow-sm",
+                           dailyStatus === 'passed' ? "bg-emerald-50 border-emerald-200 text-emerald-600" :
+                           (dailyStatus === 'failed' || dailyStatus === 'needs_attention') ? "bg-rose-50 border-rose-200 text-rose-600" :
+                           "bg-indigo-600 border-indigo-700 text-white"
                         )}>
                            {dailyStatus === 'passed' ? 'Daily: OK' : 
                             (dailyStatus === 'failed' || dailyStatus === 'needs_attention') ? 'Daily: Action' : 
-                            'Daily: Missing'}
+                            'Daily: Missed'}
                         </div>
                      )}
                      
                      {hasOnUseItems && (
-                        <div className={cn("px-2.5 py-1.5 rounded-lg border text-[10px] font-bold uppercase tracking-wider flex items-center justify-center w-full transition-colors",
-                           onUseStatus === 'passed' ? "bg-emerald-50/80 border-emerald-200 text-emerald-700" :
-                           (onUseStatus === 'failed' || onUseStatus === 'needs_attention') ? "bg-rose-50/80 border-rose-200 text-rose-700" :
-                           "bg-slate-100 border-slate-200/60 text-slate-500"
+                        <div className={cn("px-2.5 py-1 sm:py-1.5 rounded-lg border text-[9px] sm:text-[10px] font-extrabold uppercase tracking-widest flex items-center justify-center w-20 sm:w-24 transition-all shadow-sm",
+                           onUseStatus === 'passed' ? "bg-emerald-50 border-emerald-200 text-emerald-600" :
+                           (onUseStatus === 'failed' || onUseStatus === 'needs_attention') ? "bg-rose-50 border-rose-200 text-rose-600" :
+                           "bg-slate-50 border-slate-200 text-slate-400"
                         )}>
                            {onUseStatus === 'passed' ? 'On Use: OK' : 
                             (onUseStatus === 'failed' || onUseStatus === 'needs_attention') ? 'On Use: Action' : 
@@ -484,7 +515,7 @@ function MetricCard({ title, value, subtitle, icon, trend }: { title: string, va
     <motion.div 
       initial={{ opacity: 0, y: 10 }}
       animate={{ opacity: 1, y: 0 }}
-      className="bg-white/80 backdrop-blur-md rounded-2xl shadow-sm border border-slate-200/60 p-4 sm:p-5 flex flex-col justify-between relative overflow-hidden group hover:shadow-md transition-all duration-300 min-h-[140px]"
+      className="bg-white/80 backdrop-blur-md rounded-2xl shadow-sm border border-slate-200/60 p-3 sm:p-5 flex flex-col justify-between relative overflow-hidden group hover:shadow-md transition-all duration-300 min-h-[120px] sm:min-h-[140px]"
     >
       <div className={cn("absolute inset-0 bg-gradient-to-br opacity-50 transition-opacity group-hover:opacity-100", bgGradient)}></div>
       <div className="relative z-10 flex justify-between items-start mb-2 sm:mb-4">
