@@ -1,5 +1,10 @@
 import { initializeApp } from "firebase/app";
-import { getFirestore } from "firebase/firestore";
+import { 
+  initializeFirestore, 
+  getFirestore, 
+  persistentLocalCache, 
+  persistentMultipleTabManager 
+} from "firebase/firestore";
 // import { getAnalytics } from "firebase/analytics";
 
 // CEO Provided Configuration
@@ -16,8 +21,20 @@ const firebaseConfig = {
 // Initialize Firebase
 const app = initializeApp(firebaseConfig);
 
-// Initialize Cloud Firestore and get a reference to the service
-export const db = getFirestore(app);
+// Initialize Cloud Firestore with robust multi-tab persistent cache
+let firestoreDb;
+try {
+  firestoreDb = initializeFirestore(app, {
+    localCache: persistentLocalCache({
+      tabManager: persistentMultipleTabManager()
+    })
+  });
+} catch (e) {
+  console.warn("Firestore offline persistence cache is not supported or failed to initialize, falling back to standard memory cache.", e);
+  firestoreDb = getFirestore(app);
+}
+
+export const db = firestoreDb;
 
 // Analytics is optional and sometimes requires a browser context, 
 // leaving it out of required exports to prevent SSR/deployment issues on Vercel unless explicitly used.

@@ -9,6 +9,10 @@ export interface Equipment {
   location: string;
   referenceDocNo?: string; // For Document/Method Numbers
   status: 'active' | 'maintenance' | 'retired';
+  maintenanceReason?: string;
+  maintenanceNotes?: string;
+  maintenanceAt?: number;
+  maintenanceBy?: string;
   createdAt: number;
 }
 

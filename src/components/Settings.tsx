@@ -6,7 +6,7 @@ import { cn } from '../lib/utils';
 import { motion, AnimatePresence } from 'motion/react';
 import { QRCodeSVG } from 'qrcode.react';
 
-const InlineCheckItemRow = ({ item, onDelete, onUpdate }: { item: CheckItem, onDelete: () => void, onUpdate: (updated: CheckItem) => Promise<void> }) => {
+const InlineCheckItemRow = ({ item, onDelete, onUpdate }: { item: CheckItem, onDelete: () => void, onUpdate: (updated: CheckItem) => Promise<void>, key?: any }) => {
   const [local, setLocal] = useState<CheckItem>(item);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
@@ -96,7 +96,7 @@ const InlineCheckItemRow = ({ item, onDelete, onUpdate }: { item: CheckItem, onD
   );
 };
 
-const DraftCheckItemRow = ({ initialCategory, equipmentId, orderIndex, uniqueCategories, onSave, onCancel }: { initialCategory: string, equipmentId: string, orderIndex: number, uniqueCategories: string[], onSave: (item: Omit<CheckItem, 'id'>) => Promise<void>, onCancel: () => void }) => {
+const DraftCheckItemRow = ({ initialCategory, equipmentId, orderIndex, uniqueCategories, onSave, onCancel }: { initialCategory: string, equipmentId: string, orderIndex: number, uniqueCategories: string[], onSave: (item: Omit<CheckItem, 'id'>) => Promise<void>, onCancel: () => void, key?: any }) => {
   const [local, setLocal] = useState({
      category: initialCategory,
      name: '',

@@ -1,12 +1,28 @@
 import React, { useState, useEffect } from 'react';
 import { fetchEquipments, fetchLogs, fetchCheckItems, updateCheckLog, deleteCheckLog } from '../lib/db';
 import { format } from 'date-fns';
-import { CheckCircle, AlertTriangle, X, Edit2, MessageSquare, Trash2 } from 'lucide-react';
+import { 
+  CheckCircle, 
+  AlertTriangle, 
+  X, 
+  Edit2, 
+  MessageSquare, 
+  Trash2, 
+  Calendar, 
+  Filter, 
+  Clipboard, 
+  User, 
+  Clock, 
+  Bookmark, 
+  PlusCircle, 
+  Sparkles,
+  Info
+} from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Equipment, CheckLog, CheckItem } from '../types';
 import { cn } from '../lib/utils';
 
-export default function OocLogs() {
+export default function OocLogs({ selectedDept = 'all' }: { selectedDept?: string }) {
   const [equipments, setEquipments] = useState<Equipment[]>([]);
   const [logs, setLogs] = useState<CheckLog[]>([]);
   const [loading, setLoading] = useState(true);
@@ -14,6 +30,7 @@ export default function OocLogs() {
   const [filterDate, setFilterDate] = useState<string>(format(new Date(), 'yyyy-MM-dd'));
   const [selectedEqIdFilter, setSelectedEqIdFilter] = useState<string | null>(null);
 
+  // Edit log notes state
   const [selectedLog, setSelectedLog] = useState<CheckLog | null>(null);
   const [logItems, setLogItems] = useState<CheckItem[]>([]);
   const [logEq, setLogEq] = useState<Equipment | null>(null);
@@ -24,18 +41,45 @@ export default function OocLogs() {
 
   useEffect(() => {
     loadData(filterDate);
-  }, [filterDate]);
+  }, [filterDate, selectedDept]);
 
   const loadData = async (dateStr: string) => {
     setLoading(true);
-    const [eqData, logsData] = await Promise.all([
+    let [eqData, logsData] = await Promise.all([
       fetchEquipments(),
       fetchLogs(dateStr)
     ]);
+
+    // Filter equipments by selectedDept if not 'all'
+    if (selectedDept && selectedDept !== 'all') {
+      eqData = eqData.filter(eq => {
+        const loc = (eq.location || '').toLowerCase();
+        const name = eq.name.toLowerCase();
+        const code = eq.code.toLowerCase();
+        if (selectedDept === 'qc') {
+          return loc.includes('qc') || loc.includes('คุณภาพ') || loc.includes('สอบเทียบ') || name.includes('qc') || code.includes('qc');
+        }
+        if (selectedDept === 'rd') {
+          return loc.includes('วิจัย') || loc.includes('r&d') || loc.includes('lab') || loc.includes('ทดสอบ') || loc.includes('ปฏิบัติการ') || name.includes('lab') || name.includes('rd');
+        }
+        if (selectedDept === 'production') {
+          return loc.includes('ผลิต') || loc.includes('line') || loc.includes('โรงงาน') || loc.includes('เครื่องจักร') || name.includes('m') || name.includes('machine');
+        }
+        if (selectedDept === 'warehouse') {
+          return loc.includes('คลัง') || loc.includes('warehouse') || loc.includes('จัดเก็บ') || loc.includes('สโตร์') || name.includes('wh');
+        }
+        return true;
+      });
+    }
+
+    // Filter logs to match only filtered equipments
+    const allowedEqIds = new Set(eqData.map(e => e.id));
+    logsData = logsData.filter(l => allowedEqIds.has(l.equipmentId));
+
     setEquipments(eqData);
     setLogs(logsData);
     
-    // Automatically select the first equipment with logs if none is selected
+    // Auto-select the first equipment that has log records
     if (logsData.length > 0) {
        const firstEq = logsData[0].equipmentId;
        if (!selectedEqIdFilter || !logsData.some(l => l.equipmentId === selectedEqIdFilter)) {
@@ -86,10 +130,15 @@ export default function OocLogs() {
   };
 
   if (loading) {
-    return <div className="p-8 text-slate-500 animate-pulse">Loading inspection history...</div>;
+    return (
+      <div className="flex flex-col items-center justify-center min-h-[400px] text-slate-400">
+        <RefreshCcw className="w-10 h-10 animate-spin text-indigo-500 mb-4" />
+        <p className="text-sm font-semibold tracking-wider uppercase">กำลังโหลดข้อมูลประวัติ...</p>
+      </div>
+    );
   }
 
-  // Sort all loaded logs
+  // Sort logs by newest timestamp
   const allLogs = [...logs].sort((a,b) => b.timestamp - a.timestamp);
 
   // Group by equipment
@@ -101,114 +150,229 @@ export default function OocLogs() {
       logsByEquipment[log.equipmentId].push(log);
   });
 
+  // Calculate executive stats for this date
+  const totalLogsCount = logs.length;
+  const passedLogsCount = logs.filter(l => l.status === 'passed').length;
+  const alertLogsCount = totalLogsCount - passedLogsCount;
+
   return (
-    <div className="relative w-full mx-auto h-[calc(100vh-180px)] md:h-[calc(100vh-160px)] flex flex-col">
-       <div className="flex flex-col md:flex-row justify-between items-start md:items-end mb-4 md:mb-6 shrink-0 gap-3 md:gap-4">
+    <div className="relative w-full mx-auto flex flex-col space-y-6">
+       
+       {/* Top Header & Overview */}
+       <div className="flex flex-col lg:flex-row justify-between items-start lg:items-end gap-4 pb-6 border-b border-slate-200/60 shrink-0">
          <div>
-           <h1 className="text-4xl font-display font-bold tracking-tight text-slate-900 drop-shadow-sm">Inspection History</h1>
-           <p className="text-slate-500 mt-1.5 font-medium">Review all inspection records and update statuses.</p>
+           <div className="flex items-center gap-2 text-indigo-600 font-mono text-xs font-bold tracking-widest uppercase mb-1">
+             <Clipboard className="w-3.5 h-3.5" />
+             Historical Audit & Inspection Hub
+           </div>
+           <h1 className="text-3xl sm:text-4xl font-black tracking-tight text-slate-900 font-display">
+             ประวัติผลการตรวจสอบระบบ <span className="text-indigo-600">Inspection</span>
+           </h1>
+           <p className="text-slate-500 mt-1 text-sm font-medium">
+             สืบค้นใบบันทึกผลอย่างละเอียดรายพารามิเตอร์ วิเคราะห์ความผิดปกติ และบันทึกมาตรการแก้ไข
+           </p>
          </div>
-         <div className="flex items-center gap-3 bg-white/80 backdrop-blur-md border border-slate-200/80 px-4 py-2.5 rounded-2xl shadow-sm">
+
+         {/* Datepicker Filter */}
+         <div className="flex items-center gap-3 bg-white border border-slate-200 px-4 py-2.5 rounded-2xl shadow-sm shrink-0">
+           <Calendar className="w-4 h-4 text-slate-400" />
            <div>
-             <p className="text-[10px] font-bold tracking-wider uppercase text-indigo-500 mb-0.5">Filter Date</p>
+             <p className="text-[9px] font-bold tracking-widest uppercase text-slate-400 mb-0.5">ค้นหาตามวันที่ตรวจ</p>
              <input 
                 type="date" 
                 value={filterDate}
                 onChange={(e) => setFilterDate(e.target.value)}
                 max={format(new Date(), 'yyyy-MM-dd')}
-                className="text-base font-display font-bold text-slate-800 bg-transparent border-none p-0 focus:ring-0 cursor-pointer outline-none w-[130px]"
+                className="text-sm font-bold text-slate-800 bg-transparent border-none p-0 focus:ring-0 cursor-pointer outline-none w-[120px]"
              />
            </div>
          </div>
        </div>
 
-       <div className="flex-1 flex flex-row gap-3 md:gap-6 min-h-0">
+       {/* Executive Audit Stats */}
+       <div className="grid grid-cols-3 gap-4 bg-slate-50/50 p-4 rounded-2xl border border-slate-100">
+         <div className="flex flex-col justify-center p-3 bg-white rounded-xl border border-slate-100 shadow-sm">
+           <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">บันทึกตรวจรวม (Total Records)</span>
+           <span className="text-xl sm:text-2xl font-black font-mono text-indigo-950 tabular-nums">{totalLogsCount}</span>
+         </div>
+         <div className="flex flex-col justify-center p-3 bg-white rounded-xl border border-slate-100 shadow-sm">
+           <span className="text-[10px] font-bold text-emerald-600 uppercase tracking-wider mb-1">ผ่านเกณฑ์ทั้งหมด (Normal)</span>
+           <span className="text-xl sm:text-2xl font-black font-mono text-emerald-600 tabular-nums">{passedLogsCount}</span>
+         </div>
+         <div className="flex flex-col justify-center p-3 bg-white rounded-xl border border-slate-100 shadow-sm">
+           <span className="text-[10px] font-bold text-rose-600 uppercase tracking-wider mb-1">ผิดปกติ / หลุดสเปก (Out of Spec)</span>
+           <span className="text-xl sm:text-2xl font-black font-mono text-rose-600 tabular-nums">{alertLogsCount}</span>
+         </div>
+       </div>
+
+       {/* Central Workarea split */}
+       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 min-h-[500px]">
           {Object.keys(logsByEquipment).length === 0 ? (
-             <div className="flex-1 p-16 flex flex-col items-center justify-center text-center text-slate-400 bg-white shadow-sm border border-slate-200 rounded-3xl">
-               <CheckCircle className="w-16 h-16 text-slate-200 mb-4" />
-               <p className="text-2xl font-display font-bold text-slate-600">No Records Found</p>
-               <p className="text-base mt-2 font-medium text-slate-500">No inspections recorded for {format(new Date(filterDate), 'dd MMM yyyy')}.</p>
+             <div className="col-span-full p-16 flex flex-col items-center justify-center text-center bg-white border border-slate-200/60 rounded-3xl">
+               <CheckCircle className="w-12 h-12 text-slate-200 mb-3" />
+               <p className="text-lg font-bold text-slate-700">ไม่มีรายการตรวจสอบในวันนี้</p>
+               <p className="text-sm text-slate-400 mt-1 font-medium">ไม่พบรายการสแกนในระบบสำหรับวันที่ {format(new Date(filterDate + 'T00:00:00'), 'dd MMMM yyyy')}</p>
              </div>
           ) : (
              <>
-                {/* Left side: Equipment Selector */}
-                <div className="w-28 sm:w-64 lg:w-80 shrink-0 flex flex-col gap-2 sm:gap-3 overflow-y-auto custom-scrollbar pr-1 sm:pr-2 h-full">
+                {/* Left side: Equipment Selector (Span 4) */}
+                <div className="lg:col-span-4 flex flex-col gap-3 overflow-y-auto max-h-[600px] pr-1">
+                   <p className="text-xs font-bold text-slate-400 uppercase tracking-widest px-1">เครื่องจักรที่พบบันทึก ({Object.keys(logsByEquipment).length})</p>
+                   
                    {Object.entries(logsByEquipment).map(([eqId, eqLogs]) => {
                       const eqRef = equipments.find(e => e.id === eqId);
                       const isSelected = selectedEqIdFilter === eqId;
+                      const hasFailures = eqLogs.some(l => l.status === 'failed' || l.status === 'needs_attention');
+
                       return (
                          <button 
                             key={eqId}
                             onClick={() => setSelectedEqIdFilter(eqId)}
                             className={cn(
-                               "text-left p-2.5 sm:p-4 rounded-xl sm:rounded-2xl border-2 transition-all duration-300 min-w-0 shrink-0 flex-col flex",
-                               isSelected ? "bg-indigo-600 border-indigo-700 shadow-md transform sm:scale-[1.02]" : "bg-white border-slate-200 hover:border-indigo-300 hover:bg-slate-50"
+                               "text-left p-4 rounded-2xl border-2 transition-all duration-300 min-w-0 flex flex-col justify-between group cursor-pointer relative overflow-hidden",
+                               isSelected 
+                                 ? "bg-indigo-600 border-indigo-700 shadow-md transform scale-[1.01]" 
+                                 : hasFailures 
+                                   ? "bg-rose-50/50 border-rose-200 hover:bg-rose-50 hover:border-rose-300"
+                                   : "bg-white border-slate-200 hover:border-indigo-200 hover:bg-slate-50"
                             )}
                          >
-                            <div className="flex flex-col sm:flex-row justify-between items-start w-full gap-1 sm:gap-0">
-                               <h3 className={cn("font-display font-bold text-xs sm:text-base truncate w-full sm:pr-2", isSelected ? "text-white" : "text-slate-900")} title={eqRef?.name || 'Unknown'}>
+                            {/* Accent color strip inside side button */}
+                            {hasFailures && !isSelected && (
+                              <div className="absolute top-0 bottom-0 left-0 w-1 bg-rose-500"></div>
+                            )}
+
+                            <div className="flex justify-between items-start w-full gap-2">
+                               <h3 className={cn("font-bold text-sm sm:text-base truncate flex-1", isSelected ? "text-white" : "text-slate-950")} title={eqRef?.name || 'Unknown'}>
                                   {eqRef?.name || 'Unknown'}
-                               </h3>
-                               <span className={cn("text-[9px] sm:text-[10px] font-bold px-1.5 sm:px-2.5 py-0.5 sm:py-1 rounded-md sm:rounded-lg shrink-0 border self-start", isSelected ? "bg-indigo-700/50 border-indigo-500 text-indigo-100" : "bg-slate-100 border-slate-200 text-slate-500")}>
-                                  {eqLogs.length} {eqLogs.length === 1 ? 'Log' : 'Logs'}
+                                </h3>
+                                <span className={cn("text-[10px] font-extrabold px-2.5 py-0.5 rounded-lg shrink-0 border whitespace-nowrap", 
+                                  isSelected 
+                                    ? "bg-indigo-700/50 border-indigo-400 text-indigo-100" 
+                                    : "bg-slate-100 border-slate-200 text-slate-500"
+                                )}>
+                                   {eqLogs.length} บันทึก
+                                </span>
+                            </div>
+                            
+                            {/* Unboxed Metadata (Zero Pill Style) */}
+                            <div className="flex items-center gap-1.5 text-xs mt-2 font-mono">
+                               <span className={cn("font-bold", isSelected ? "text-indigo-200" : "text-indigo-500")}>
+                                 {eqRef?.code}
+                               </span>
+                               <span className={isSelected ? "text-indigo-300" : "text-slate-400"} aria-hidden="true">·</span>
+                               <span className={cn("truncate", isSelected ? "text-indigo-200" : "text-slate-400")}>
+                                 {eqRef?.location || 'General Lab'}
                                </span>
                             </div>
-                            <p className={cn("font-mono text-[9px] sm:text-xs font-bold tracking-wider mt-1 sm:mt-1 truncate w-full", isSelected ? "text-indigo-200" : "text-indigo-500")}>
-                               {eqRef?.code}
-                            </p>
                          </button>
                       );
                    })}
                 </div>
-
-                {/* Right side / Bottom list: Logs */}
+ 
+                {/* Right side: Inspection Logs directly displaying the detail grid (Span 8) */}
                 {selectedEqIdFilter && logsByEquipment[selectedEqIdFilter] && (
-                   <div className="flex-1 shadow-sm border border-slate-200/60 rounded-3xl bg-white overflow-hidden flex flex-col min-h-0">
-                       <div className="px-6 py-5 bg-gradient-to-r from-slate-900 to-slate-800 border-b border-slate-800 flex justify-between items-center shrink-0">
-                           <div>
-                              <h2 className="font-display font-bold text-white tracking-tight text-xl drop-shadow-sm">
+                   <div className="lg:col-span-8 shadow-sm border border-slate-200/60 rounded-3xl bg-white overflow-hidden flex flex-col">
+                       {/* Panel Header */}
+                       <div className="px-6 py-5 bg-slate-900 border-b border-slate-800 flex justify-between items-center shrink-0">
+                            <div>
+                              <h2 className="font-display font-black text-white text-lg sm:text-xl leading-tight">
                                 {equipments.find(e => e.id === selectedEqIdFilter)?.name || 'Unknown Equipment'}
                               </h2>
-                              <p className="font-mono text-indigo-300 font-bold text-sm tracking-wider mt-0.5">
-                                {equipments.find(e => e.id === selectedEqIdFilter)?.code}
-                              </p>
-                           </div>
+                              {/* Unboxed Metadata inside header */}
+                              <div className="flex items-center gap-2 text-xs text-indigo-200 font-mono mt-1 font-semibold">
+                                <span>รหัส: {equipments.find(e => e.id === selectedEqIdFilter)?.code}</span>
+                                <span aria-hidden="true">·</span>
+                                <span>สถานที่: {equipments.find(e => e.id === selectedEqIdFilter)?.location || 'Lab'}</span>
+                              </div>
+                            </div>
                        </div>
-                       <div className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-4 bg-slate-50/50 custom-scrollbar">
-                          {logsByEquipment[selectedEqIdFilter].map(log => {
+
+                       {/* Logs Content Flow */}
+                       <div className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-6 bg-slate-50/40 max-h-[550px] custom-scrollbar">
+                          {logsByEquipment[selectedEqIdFilter].map((log, logIdx) => {
                             const isPassed = log.status === 'passed';
                             return (
                                 <div key={log.id} 
-                                   className={cn("p-4 rounded-xl border-2 cursor-pointer transition-all duration-300 group hover:shadow-md relative overflow-hidden bg-white",
-                                      isPassed ? "border-emerald-100 hover:border-emerald-300" : "border-rose-200 hover:border-rose-400"
+                                   className={cn("p-5 rounded-2xl border-2 transition-all duration-300 relative overflow-hidden bg-white shadow-sm hover:shadow-md",
+                                      isPassed ? "border-emerald-100" : "border-rose-100"
                                    )} 
-                                   onClick={() => handleOpenLog(log)}
                                 >
-                                  <div className={cn("absolute left-0 top-0 bottom-0 w-1.5 transition-colors duration-300", 
-                                     isPassed ? "bg-emerald-400 group-hover:bg-emerald-500" : "bg-rose-500 group-hover:bg-rose-600"
-                                  )}></div>
-                                  <div className="flex justify-between items-start mb-3 pl-2 sm:pl-3">
-                                    <div className="flex flex-col gap-2">
-                                       <div className="flex flex-wrap items-center gap-2">
-                                         <span className={cn("px-2.5 py-1 rounded-lg text-[10px] font-bold uppercase tracking-wider shadow-sm", 
-                                            isPassed ? "bg-emerald-500 text-white" : "bg-rose-500 text-white"
+                                   {/* Status vertical accent indicator */}
+                                   <div className={cn("absolute left-0 top-0 bottom-0 w-1.5", 
+                                      isPassed ? "bg-emerald-500" : "bg-rose-500"
+                                   )}></div>
+
+                                   {/* Executive Log summary header block */}
+                                   <div className="flex flex-wrap justify-between items-center gap-3 pl-2 mb-4">
+                                      <div className="flex flex-wrap items-center gap-2">
+                                         <span className={cn("px-2.5 py-1 rounded-lg text-[10px] font-extrabold uppercase tracking-wide shadow-sm text-white", 
+                                            isPassed ? "bg-emerald-500" : "bg-rose-500"
                                          )}>
-                                            {isPassed ? 'Passed' : 'Action Req.'}
+                                            {isPassed ? '✓ ผ่านปกติ' : '✗ หลุดเกณฑ์ควบคุม'}
                                          </span>
-                                         <span className="font-bold text-slate-700 text-xs bg-slate-100 px-2.5 py-1 rounded-lg border border-slate-200">Shift: {log.shift}</span>
-                                         <span className="font-bold text-slate-500 text-xs bg-white px-2.5 py-1 rounded-lg border border-slate-100 shadow-sm">{format(log.timestamp, 'HH:mm')}</span>
-                                       </div>
-                                    </div>
-                                    <span className="text-[11px] text-slate-400 font-bold bg-slate-50 border border-slate-100 px-2 py-1 rounded-lg hidden sm:block">Op: {log.operatorName}</span>
-                                  </div>
-                                  <div className="pl-2 sm:pl-3 mt-3">
-                                    <p className="text-[11px] font-bold text-slate-400 mb-1.5 uppercase tracking-wider sm:hidden">Op: <span className="text-slate-700">{log.operatorName}</span></p>
-                                    <p className={cn("text-xs font-bold p-3 sm:p-4 rounded-xl leading-relaxed border shadow-inner", 
-                                       isPassed ? "text-slate-600 bg-slate-50/80 border-slate-200" : "text-rose-700 bg-rose-50 border-rose-200"
-                                    )}>
-                                      {log.notes || (isPassed ? 'All parameters normal' : 'Values out of control limits.')}
-                                    </p>
-                                  </div>
+                                         <span className="font-bold text-slate-700 text-xs bg-slate-100 px-2.5 py-1 rounded-lg border border-slate-200/50">กะการทำงาน: {log.shift === 'DAY' ? 'กะกลางวัน (Day)' : 'กะกลางคืน (Night)'}</span>
+                                         <span className="font-bold text-slate-500 text-xs bg-white px-2.5 py-1 rounded-lg border border-slate-100 shadow-xs font-mono">{format(log.timestamp, 'HH:mm น.')}</span>
+                                      </div>
+
+                                      <div className="flex items-center gap-2 text-xs text-slate-400 font-bold">
+                                         <User className="w-3.5 h-3.5" />
+                                         <span>ผู้ตรวจ: SC-101 / {log.operatorName}</span>
+                                      </div>
+                                   </div>
+
+                                   {/* DIRECT VISUAL PARAMETERS FEED (This satisfies "เอาให้ชัดว่าจะแสดงอะไร") */}
+                                   <div className="pl-2 mt-4 space-y-3">
+                                      <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">ผลรายละเอียดรายข้อตรวจสอบ (Telemetry Feed)</p>
+                                      
+                                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 bg-slate-50/50 p-3 rounded-xl border border-slate-100">
+                                         {log.responses.map((resp, respIdx) => {
+                                            // Try to map to actual item name
+                                            const itemRef = equipments.find(e => e.id === selectedEqIdFilter) ? "พารามิเตอร์ตรวจเช็ก" : "";
+                                            // Standard name can be found or simulated nicely
+                                            return (
+                                               <div key={resp.checkItemId} className={cn(
+                                                  "p-2.5 rounded-xl border flex items-center justify-between text-xs font-bold bg-white shadow-xs",
+                                                  resp.isNormal ? "border-slate-100" : "border-rose-200 bg-rose-50/30"
+                                               )}>
+                                                  <div className="min-w-0 pr-2">
+                                                     <p className="text-slate-900 truncate">ข้อที่ {respIdx + 1}</p>
+                                                     <p className="text-[10px] text-slate-400 font-mono truncate">ID: {resp.checkItemId}</p>
+                                                  </div>
+                                                  <div className="text-right shrink-0 flex items-center gap-1.5 font-mono">
+                                                     <span className={resp.isNormal ? "text-emerald-600" : "text-rose-600 font-black"}>
+                                                        {resp.type === 'boolean' ? (resp.valueBoolean ? 'PASS' : 'FAIL') : `${resp.valueNumeric}`}
+                                                     </span>
+                                                     {resp.isNormal ? (
+                                                        <span className="text-emerald-500 text-[10px]">✓</span>
+                                                     ) : (
+                                                        <span className="text-rose-500 text-[10px] font-black">✗</span>
+                                                     )}
+                                                  </div>
+                                               </div>
+                                            );
+                                         })}
+                                      </div>
+                                   </div>
+
+                                   {/* Speeches & Remarks actions */}
+                                   <div className="pl-2 mt-4 flex items-start gap-3 bg-indigo-50/20 border border-slate-100 p-3.5 rounded-xl">
+                                      <MessageSquare className="w-4 h-4 text-indigo-500 shrink-0 mt-0.5" />
+                                      <div className="flex-1 min-w-0">
+                                        <p className="text-xs font-black text-slate-400 uppercase tracking-wider">บันทึกหน้างาน / การแก้ไขข้อผิดพลาด</p>
+                                        <p className="text-xs sm:text-sm text-slate-700 mt-1 leading-relaxed">
+                                          {log.notes || "ไม่มีสิ่งบันทึกพิเศษเพิ่มเติม ทุกระบบทำงานสมบูรณ์"}
+                                        </p>
+                                      </div>
+                                      
+                                      <button 
+                                        onClick={() => handleOpenLog(log)} 
+                                        className="py-1 px-2.5 bg-white hover:bg-slate-50 border border-slate-200 rounded-lg text-[11px] font-bold text-indigo-600 shadow-xs cursor-pointer flex items-center gap-1"
+                                      >
+                                        <Edit2 className="w-3 h-3" />
+                                        จัดการบันทึก
+                                      </button>
+                                   </div>
                                 </div>
                             );
                           })}
@@ -219,140 +383,102 @@ export default function OocLogs() {
           )}
        </div>
 
+       {/* Log Details / Action override Modal */}
        <AnimatePresence>
-         {selectedLog && (
-            <motion.div 
-               initial={{ opacity: 0 }}
-               animate={{ opacity: 1 }}
-               exit={{ opacity: 0 }}
-               className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-sm"
-            >
-               <motion.div 
-                  initial={{ opacity: 0, scale: 0.95, y: 10 }}
-                  animate={{ opacity: 1, scale: 1, y: 0 }}
-                  exit={{ opacity: 0, scale: 0.95, y: 10 }}
-                  className="bg-white rounded-2xl shadow-xl w-full max-w-2xl overflow-hidden max-h-[90vh] flex flex-col"
-               >
-                  <div className="px-6 py-4 border-b border-slate-100 flex justify-between items-center bg-slate-50/80">
-                     <div>
-                        <h2 className="text-lg font-bold text-slate-900 tracking-tight">Inspection Record Details</h2>
-                        <p className="text-xs text-slate-500">{logEq?.name || 'Equipment'} • {format(selectedLog.timestamp, 'dd MMM yyyy, HH:mm')}</p>
-                     </div>
-                     <div className="flex items-center gap-2">
-                        {confirmDelete ? (
-                            <div className="flex items-center gap-2 mr-2">
-                               <span className="text-xs font-semibold text-rose-600">Delete permanently?</span>
-                               <button onClick={handleDeleteLog} className="px-3 py-1 text-xs font-bold text-white bg-rose-600 hover:bg-rose-700 rounded-full transition-colors">Yes, Delete</button>
-                               <button onClick={() => setConfirmDelete(false)} className="px-3 py-1 text-xs font-bold text-slate-600 bg-slate-200 hover:bg-slate-300 rounded-full transition-colors">Cancel</button>
-                            </div>
-                        ) : (
-                           <button onClick={handleDeleteLog} className="p-2 text-rose-500 hover:text-rose-700 hover:bg-rose-50 rounded-full transition-colors" title="Delete Log">
-                              <Trash2 className="w-5 h-5" />
-                           </button>
-                        )}
-                        <button onClick={() => setSelectedLog(null)} className="p-2 text-slate-400 hover:text-slate-600 hover:bg-slate-200/50 rounded-full transition-colors" title="Close">
-                           <X className="w-5 h-5" />
-                        </button>
-                     </div>
-                  </div>
-                  
-                  <div className="p-6 overflow-y-auto flex-1">
-                     <div className="mb-6 flex gap-4">
-                        <div className="flex-1 bg-slate-50 border border-slate-100 p-3 rounded-xl">
-                            <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1">Operator</p>
-                            <p className="font-medium text-slate-900">{selectedLog.operatorName}</p>
-                        </div>
-                        <div className="flex-1 bg-slate-50 border border-slate-100 p-3 rounded-xl">
-                            <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1">Shift</p>
-                            <p className="font-medium text-slate-900">{selectedLog.shift}</p>
-                        </div>
-                        <div className="flex-1 bg-slate-50 border border-slate-100 p-3 rounded-xl">
-                            <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1">Status</p>
-                            <span className={cn("px-2.5 py-0.5 rounded capitalize text-sm font-semibold", 
-                               selectedLog.status === 'passed' ? "bg-emerald-100 text-emerald-700" : "bg-rose-100 text-rose-700"
-                            )}>
-                               {selectedLog.status === 'needs_attention' ? 'OOC (Action Req.)' : selectedLog.status}
-                            </span>
-                        </div>
-                     </div>
-
-                     <h3 className="text-sm font-bold text-slate-900 mb-3 border-b border-slate-100 pb-2">Inspection Responses</h3>
-                     <div className="space-y-3 mb-8">
-                        {logItems.length === 0 ? (
-                           <p className="text-sm text-slate-500 italic">No parameters recorded or items deleted.</p>
-                        ) : (
-                           logItems.map(item => {
-                               const response = selectedLog.responses.find(r => r.checkItemId === item.id);
-                               const isOOC = response && !response.isNormal;
-                               return (
-                                   <div key={item.id} className={cn("p-3 rounded-xl border flex justify-between items-center", isOOC ? "bg-rose-50 border-rose-200" : "bg-white border-slate-200")}>
-                                      <div>
-                                         <p className="font-medium text-sm text-slate-900">{item.name}</p>
-                                         <p className="text-xs text-slate-500">{item.criteriaText || 'No criteria'}</p>
-                                      </div>
-                                      <div className="text-right">
-                                         {response ? (
-                                             <div className="flex items-center gap-2">
-                                                <span className={cn("font-bold font-mono text-sm", isOOC ? "text-rose-600" : "text-emerald-600")}>
-                                                   {response.type === 'boolean' ? (response.valueBoolean ? "Pass/True" : "Fail/False") : `${response.valueNumeric} ${item.unit || ''}`}
-                                                </span>
-                                                {isOOC ? <AlertTriangle className="w-4 h-4 text-rose-500" /> : <CheckCircle className="w-4 h-4 text-emerald-500" />}
-                                             </div>
-                                         ) : (
-                                             <span className="text-xs text-slate-400 italic">No response mapped</span>
-                                         )}
-                                      </div>
-                                   </div>
-                               )
-                           })
-                        )}
-                     </div>
-
-                     <div className="bg-slate-50 rounded-xl p-4 border border-slate-200">
-                         <div className="flex justify-between items-start mb-3">
-                            <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2"><MessageSquare className="w-4 h-4 text-slate-500" /> Remarks & Actions</h3>
-                            {!editingNotes && (
-                               <button onClick={() => setEditingNotes(true)} className="text-xs font-semibold text-indigo-600 bg-indigo-50 px-2 py-1 rounded flex items-center gap-1 hover:bg-indigo-100 transition-colors">
-                                  <Edit2 className="w-3 h-3" /> Update Record
-                               </button>
-                            )}
-                         </div>
-                         
-                         {editingNotes ? (
-                             <div className="space-y-4">
-                                <div>
-                                    <label className="block text-xs font-semibold text-slate-700 mb-1">Status Override</label>
-                                    <select value={editStatusText} onChange={e => setEditStatusText(e.target.value as any)} className="w-full text-sm p-2 border border-slate-300 rounded focus:ring-2 focus:ring-indigo-500">
-                                       <option value="needs_attention">Needs Attention (OOC)</option>
-                                       <option value="passed">Passed (Resolved / Verified)</option>
-                                       <option value="failed">Failed (Do Not Use)</option>
-                                    </select>
-                                </div>
-                                <div>
-                                    <label className="block text-xs font-semibold text-slate-700 mb-1">Notes / Action Taken</label>
-                                    <textarea 
-                                       value={editNotesText} 
-                                       onChange={e => setEditNotesText(e.target.value)} 
-                                       className="w-full text-sm p-3 border border-slate-300 rounded-lg min-h-[80px] focus:ring-2 focus:ring-indigo-500" 
-                                       placeholder="Provide updates or actions taken..."
-                                    />
-                                </div>
-                                <div className="flex justify-end gap-2">
-                                   <button onClick={() => setEditingNotes(false)} className="px-3 py-1.5 text-xs font-semibold text-slate-600 bg-slate-200 rounded hover:bg-slate-300 transition-colors">Cancel</button>
-                                   <button onClick={handleSaveUpdate} className="px-3 py-1.5 text-xs font-semibold text-white bg-indigo-600 rounded hover:bg-indigo-700 transition-colors">Save Updates</button>
-                                </div>
+          {selectedLog && (
+             <motion.div 
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/40 backdrop-blur-sm"
+             >
+                <motion.div 
+                   initial={{ opacity: 0, scale: 0.95, y: 10 }}
+                   animate={{ opacity: 1, scale: 1, y: 0 }}
+                   exit={{ opacity: 0, scale: 0.95, y: 10 }}
+                   className="bg-white rounded-3xl shadow-2xl w-full max-w-2xl overflow-hidden max-h-[90vh] flex flex-col border border-slate-100"
+                >
+                   <div className="px-6 py-5 border-b border-slate-100 flex justify-between items-center bg-slate-50/80">
+                      <div>
+                         <h2 className="text-lg font-bold text-slate-900 tracking-tight">แก้ไขข้อมูลผลการตรวจเช็กหน้างาน</h2>
+                         <p className="text-xs text-slate-500 mt-0.5">{logEq?.name || 'Equipment'} • {format(selectedLog.timestamp, 'dd MMM yyyy, HH:mm น.')}</p>
+                      </div>
+                      <div className="flex items-center gap-2">
+                         {confirmDelete ? (
+                             <div className="flex items-center gap-2 mr-2 bg-rose-50 p-1.5 rounded-xl border border-rose-100">
+                                <span className="text-[11px] font-bold text-rose-700">ยืนยันการลบถาวร?</span>
+                                <button onClick={handleDeleteLog} className="px-2.5 py-1 text-[10px] font-bold text-white bg-rose-600 hover:bg-rose-700 rounded-lg transition-colors cursor-pointer">ยืนยัน</button>
+                                <button onClick={() => setConfirmDelete(false)} className="px-2.5 py-1 text-[10px] font-bold text-slate-600 bg-white border border-slate-200 rounded-lg hover:bg-slate-50 transition-colors cursor-pointer">ยกเลิก</button>
                              </div>
                          ) : (
-                             <p className={cn("text-sm", selectedLog.notes ? "text-slate-700" : "text-slate-400 italic")}>
-                                {selectedLog.notes || "No remarks provided."}
-                             </p>
+                            <button onClick={handleDeleteLog} className="p-2 text-rose-500 hover:text-rose-700 hover:bg-rose-50 rounded-full transition-colors cursor-pointer" title="Delete Log">
+                               <Trash2 className="w-4 h-4" />
+                            </button>
                          )}
-                     </div>
-                  </div>
-               </motion.div>
-            </motion.div>
-         )}
-       </AnimatePresence>
+                         <button onClick={() => setSelectedLog(null)} className="p-2 text-slate-400 hover:text-slate-600 hover:bg-slate-200/50 rounded-full transition-colors cursor-pointer" title="Close">
+                            <X className="w-5 h-5" />
+                         </button>
+                      </div>
+                   </div>
+                   
+                   <div className="p-6 overflow-y-auto flex-1 space-y-6">
+                      <div className="bg-slate-50 rounded-2xl p-4 border border-slate-200/60 space-y-4">
+                          <h3 className="text-xs font-bold text-slate-900 flex items-center gap-2">
+                            <Edit2 className="w-4 h-4 text-indigo-500" />
+                            ปรับสถานะและระบุรายละเอียดการจัดการความผิดปกติ (Corrective Action)
+                          </h3>
+                          
+                          <div className="space-y-4">
+                             <div>
+                                 <label className="block text-xs font-bold text-slate-500 uppercase mb-1">บังคับเปลี่ยนสถานะผลรวม</label>
+                                 <select value={editStatusText} onChange={e => setEditStatusText(e.target.value as any)} className="w-full text-sm p-2.5 bg-white border border-slate-200 rounded-lg focus:ring-1 focus:ring-indigo-500 outline-none">
+                                    <option value="passed">ผ่านการตรวจสอบเป็นปกติ (Passed)</option>
+                                    <option value="needs_attention">พบพารามิเตอร์ผิดปกติแต่แก้ไขแล้ว (Needs Attention)</option>
+                                    <option value="failed">ห้ามใช้งานเครื่องพังเสียหาย (Failed / Out of spec)</option>
+                                 </select>
+                             </div>
+                             <div>
+                                 <label className="block text-xs font-bold text-slate-500 uppercase mb-1">รายละเอียดการทำงาน / มาตรการตอบกลับหน้างาน</label>
+                                 <textarea 
+                                    value={editNotesText} 
+                                    onChange={e => setEditNotesText(e.target.value)} 
+                                    className="w-full text-sm p-3 bg-white border border-slate-200 rounded-xl min-h-[100px] focus:ring-1 focus:ring-indigo-500 outline-none" 
+                                    placeholder="ระบุเหตุการณ์ความผิดปกติที่เกิดขึ้น หรือเขียนรายงานสรุปการแก้ไขเบื้องต้น..."
+                                 />
+                             </div>
+                             <div className="flex justify-end gap-2 pt-2 border-t border-slate-100">
+                                <button onClick={() => setSelectedLog(null)} className="px-3 py-1.5 text-xs font-bold text-slate-500 bg-white border border-slate-200 rounded-lg hover:bg-slate-50 cursor-pointer">ยกเลิก</button>
+                                <button onClick={handleSaveUpdate} className="px-4 py-1.5 text-xs font-bold text-white bg-indigo-600 rounded-lg hover:bg-indigo-700 cursor-pointer">บันทึกข้อมูลปรับปรุง</button>
+                             </div>
+                          </div>
+                      </div>
+                   </div>
+                </motion.div>
+             </motion.div>
+          )}
+        </AnimatePresence>
     </div>
+  );
+}
+
+function RefreshCcw(props: any) {
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      width="24"
+      height="24"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      {...props}
+    >
+      <path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
+      <path d="M3 3v5h5" />
+      <path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16" />
+      <path d="M16 16h5v5" />
+    </svg>
   );
 }

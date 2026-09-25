@@ -2,9 +2,19 @@ import React, { useState, useEffect } from 'react';
 import Dashboard from './components/Dashboard';
 import PerformCheck from './components/PerformCheck';
 import Settings from './components/Settings';
-import { LayoutDashboard, ClipboardCheck, Stethoscope, Settings2, History } from 'lucide-react';
-import { cn } from './lib/utils';
 import OocLogs from './components/OocLogs';
+import { 
+  LayoutDashboard, 
+  ClipboardCheck, 
+  Settings2, 
+  History, 
+  ShieldCheck,
+  Building2,
+  Lock,
+  User,
+  ChevronRight
+} from 'lucide-react';
+import { cn } from './lib/utils';
 
 type View = 'dashboard' | 'check' | 'settings' | 'ooc_logs';
 
@@ -14,7 +24,7 @@ function App() {
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
-    const eqCode = params.get('eqCode');
+    const eqCode = params.get('eqCode') || params.get('id') || params.get('equipmentId') || params.get('code') || params.get('eq') || params.get('machine');
     if (eqCode) {
       setInitialEqCode(eqCode);
       setCurrentView('check');
@@ -22,116 +32,155 @@ function App() {
   }, []);
 
   return (
-    <div className="min-h-screen bg-slate-50 flex flex-col md:flex-row text-slate-800 font-sans selection:bg-indigo-100 selection:text-indigo-900 relative">
-      {/* Background Decor */}
-      <div className="fixed inset-0 z-0 pointer-events-none w-full h-full bg-[radial-gradient(ellipse_at_top_right,_var(--tw-gradient-stops))] from-indigo-100/40 via-transparent to-transparent"></div>
+    <div className="min-h-screen bg-slate-50 flex flex-col md:flex-row text-slate-800 font-sans selection:bg-indigo-100 selection:text-indigo-900">
       
-      {/* Desktop Sidebar Navigation */}
-      <nav className="hidden md:flex w-64 bg-gradient-to-b from-indigo-600 via-indigo-700 to-violet-800 border-r border-indigo-500/30 flex-shrink-0 flex-col pt-8 h-screen sticky top-0 z-10 transition-all relative overflow-hidden shadow-2xl shadow-indigo-900/20">
-         {/* Vibrant blurred blobs */}
-         <div className="absolute top-0 left-0 w-full h-full bg-[url('https://www.transparenttextures.com/patterns/cubes.png')] opacity-10 pointer-events-none"></div>
-         <div className="absolute top-[-10%] right-[-50%] w-96 h-96 bg-fuchsia-500/30 rounded-full blur-[100px] pointer-events-none"></div>
-         <div className="absolute bottom-[-10%] left-[-20%] w-64 h-64 bg-blue-400/30 rounded-full blur-[80px] pointer-events-none"></div>
+      {/* Premium Light Sidebar Navigation */}
+      <nav className="hidden md:flex w-72 bg-white border-r border-slate-200/80 flex-shrink-0 flex-col pt-8 h-screen sticky top-0 z-10 shadow-[4px_0_24px_rgba(15,23,42,0.02)] relative overflow-hidden">
+         {/* Subtle organic light gradient glow */}
+         <div className="absolute top-0 right-0 w-32 h-32 bg-indigo-50/50 rounded-full blur-3xl pointer-events-none"></div>
+         <div className="absolute bottom-0 left-0 w-40 h-40 bg-indigo-50/30 rounded-full blur-3xl pointer-events-none"></div>
 
-         <div className="px-6 mb-8 flex items-center gap-4 relative z-10">
-             <div className="w-12 h-12 rounded-2xl bg-white text-indigo-600 flex justify-center items-center shadow-[0_8px_30px_rgba(255,255,255,0.3)] ring-1 ring-white/50">
-                 <Stethoscope className="w-6 h-6" />
+         {/* Corporate Top Branding - Clean Slate Deep Tone */}
+         <div className="px-6 mb-8 flex items-center gap-3.5 relative z-10">
+             <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-indigo-500 to-indigo-600 text-white flex justify-center items-center shadow-[0_4px_15px_rgba(79,70,229,0.15)] border border-indigo-400/20 shrink-0">
+                 <ShieldCheck className="w-5 h-5 text-white" />
              </div>
-             <div>
-               <h2 className="font-display font-black text-2xl tracking-tight leading-tight text-white drop-shadow-md">LabControl</h2>
-               <p className="text-[10px] font-mono font-bold tracking-[0.3em] text-indigo-200 uppercase drop-shadow-sm mt-0.5">System</p>
+             <div className="min-w-0">
+               <div className="flex items-center gap-1.5">
+                 <h2 className="font-sans font-black text-base tracking-tight leading-none text-slate-900 uppercase">APEX INSPEC</h2>
+                 <span className="text-[8px] font-extrabold bg-indigo-50 text-indigo-600 px-1.5 py-0.5 rounded border border-indigo-100 uppercase tracking-widest scale-90">v3.5</span>
+               </div>
+               <p className="text-[9px] font-bold tracking-[0.25em] text-slate-400 uppercase mt-1">Multi-Agency Monitor</p>
              </div>
          </div>
-         <div className="px-4 flex flex-col gap-2 relative z-10">
+
+         {/* Sidebar Nav Items */}
+         <div className="px-3.5 flex flex-col gap-1 relative z-10 flex-1">
+             <div className="px-3.5 mb-2.5">
+                 <p className="text-[10px] font-extrabold text-slate-400 uppercase tracking-widest">การวิเคราะห์ & ข้อมูล</p>
+             </div>
+             
              <NavItem 
                 active={currentView === 'dashboard'} 
                 onClick={() => setCurrentView('dashboard')} 
-                icon={<LayoutDashboard className="w-[20px] h-[20px]" />} 
-                label="Manager Dashboard" 
+                icon={<LayoutDashboard className="w-[18px] h-[18px]" />} 
+                label="แผงควบคุมหลัก" 
+                subLabel="Manager Dashboard"
              />
              <NavItem 
                 active={currentView === 'ooc_logs'} 
                 onClick={() => setCurrentView('ooc_logs')} 
-                icon={<History className="w-[20px] h-[20px]" />} 
-                label="Inspection History" 
+                icon={<History className="w-[18px] h-[18px]" />} 
+                label="ประวัติและค่าพารามิเตอร์" 
+                subLabel="Inspection History"
              />
+
+             <div className="my-4 border-t border-slate-100 mx-2.5 pt-4">
+                 <p className="text-[10px] font-extrabold text-slate-400 uppercase tracking-widest px-1">ปฏิบัติงานหน้างาน</p>
+             </div>
+
              <NavItem 
                 active={currentView === 'check'} 
                 onClick={() => setCurrentView('check')} 
-                icon={<ClipboardCheck className="w-[20px] h-[20px]" />} 
-                label="Operator Terminal" 
+                icon={<ClipboardCheck className="w-[18px] h-[18px]" />} 
+                label="สแกนบันทึกตรวจเช็ก" 
+                subLabel="Operator Terminal"
              />
-             <div className="my-5 border-t border-indigo-400/30 mx-2 pt-5 pb-1">
-                 <p className="text-[10px] font-black text-indigo-200/80 uppercase tracking-[0.25em] pl-2 drop-shadow-sm">Admin</p>
+
+             <div className="my-4 border-t border-slate-100 mx-2.5 pt-4">
+                 <p className="text-[10px] font-extrabold text-slate-400 uppercase tracking-widest px-1">ระบบวิศวกรรม</p>
              </div>
+
              <NavItem 
                 active={currentView === 'settings'} 
                 onClick={() => setCurrentView('settings')} 
-                icon={<Settings2 className="w-[20px] h-[20px]" />} 
-                label="System Settings" 
+                icon={<Settings2 className="w-[18px] h-[18px]" />} 
+                label="ตั้งค่าเกณฑ์เครื่องมือ" 
+                subLabel="Control Center"
              />
          </div>
          
-         <div className="mt-auto p-5 relative z-10">
-            <div className="bg-white/10 backdrop-blur-xl rounded-3xl p-5 border border-white/20 shadow-xl relative overflow-hidden group hover:bg-white/20 transition-all cursor-default">
-               <div className="absolute top-0 right-0 w-32 h-32 bg-emerald-400/20 rounded-bl-full translate-x-8 -translate-y-8 group-hover:bg-emerald-400/30 transition-all blur-[10px]"></div>
-               <p className="text-[10px] font-bold text-indigo-100 uppercase tracking-[0.2em] mb-2 drop-shadow-sm">Network Status</p>
-               <div className="flex items-center gap-3">
-                  <div className="w-3 h-3 rounded-full bg-emerald-400 shadow-[0_0_15px_rgba(52,211,153,1)] animate-pulse border border-white/50"></div>
-                  <span className="text-[13px] font-bold text-white tracking-wide drop-shadow-md">All Systems Online</span>
+         {/* Beautiful Profile / Operator Card & Server Status (Double Deck UI - Light Edition) */}
+         <div className="p-4 relative z-10 mt-auto border-t border-slate-100 bg-slate-50/50">
+            {/* Operator Widget */}
+            <div className="flex items-center gap-3 p-2.5 rounded-xl bg-white border border-slate-200/60 mb-3 shadow-sm">
+               <div className="w-8 h-8 rounded-lg bg-indigo-50 border border-indigo-100/50 flex items-center justify-center text-indigo-600 shrink-0">
+                  <User className="w-4 h-4" />
                </div>
+               <div className="min-w-0 flex-1">
+                  <p className="text-[11px] font-black text-slate-800 truncate">Sarah Connor</p>
+                  <p className="text-[9px] text-slate-400 font-bold font-mono">SC-101 · หัวหน้าผู้ตรวจ</p>
+               </div>
+               <div className="w-2 h-2 rounded-full bg-emerald-500 shrink-0 shadow-[0_0_8px_rgba(16,185,129,0.3)]"></div>
+            </div>
+
+            {/* Network secure health bar */}
+            <div className="flex items-center justify-between text-[10px] text-slate-400 font-bold px-1">
+               <span className="flex items-center gap-1.5">
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
+                  ระบบเชื่อมต่อคลาวด์ปกติ
+               </span>
+               <span className="font-mono text-slate-400">SECURE SSL</span>
             </div>
          </div>
       </nav>
 
-      {/* Mobile Top Header */}
-      <header className="md:hidden bg-white/80 backdrop-blur-xl border-b border-slate-200/60 px-4 py-3 sticky top-0 z-20 flex justify-between items-center">
-        <div className="flex items-center gap-3">
-             <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-indigo-500 to-indigo-700 text-white flex justify-center items-center shadow-md">
-                 <Stethoscope className="w-4 h-4" />
+      {/* Mobile Top Header (Light Theme Matching) */}
+      <header className="md:hidden bg-white border-b border-slate-200/80 px-4 py-3.5 sticky top-0 z-20 flex justify-between items-center shadow-sm">
+        <div className="flex items-center gap-2.5">
+             <div className="w-8 h-8 rounded-lg bg-indigo-600 text-white flex justify-center items-center">
+                 <ShieldCheck className="w-4 h-4 text-white" />
              </div>
-             <h2 className="font-display font-bold tracking-tight text-slate-900">LabControl</h2>
-         </div>
+             <div>
+               <h2 className="font-sans font-black tracking-tight text-slate-900 text-sm uppercase">APEX INSPEC</h2>
+               <p className="text-[8px] font-bold tracking-widest text-slate-400 uppercase leading-none">Enterprise</p>
+             </div>
+        </div>
+
+        <div className="flex items-center gap-1 text-[9px] font-bold text-emerald-600 bg-emerald-50 border border-emerald-100 px-2.5 py-0.5 rounded-full">
+          <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
+          Online
+        </div>
       </header>
 
       {/* Main Content Stage */}
-      <main className="flex-1 p-3 sm:p-5 md:p-8 lg:p-12 mb-20 md:mb-0 max-h-screen md:overflow-y-auto relative z-10 w-full">
-         <div className={currentView === 'settings' ? "w-full pb-10" : "w-full max-w-[1600px] mx-auto pb-10"}>
-            {currentView === 'dashboard' && <Dashboard />}
-            {currentView === 'ooc_logs' && <OocLogs />}
+      <main className="flex-1 p-4 sm:p-6 md:p-8 lg:p-10 mb-20 md:mb-0 max-h-screen md:overflow-y-auto relative z-10 w-full bg-slate-50">
+         <div className={currentView === 'settings' ? "w-full pb-10" : "w-full max-w-7xl mx-auto pb-10"}>
+            {currentView === 'dashboard' && <Dashboard selectedDept="all" />}
+            {currentView === 'ooc_logs' && <OocLogs selectedDept="all" />}
             {currentView === 'check' && (
-              <PerformCheck onSaved={() => setCurrentView('dashboard')} initialEqCode={initialEqCode} />
+              <PerformCheck onSaved={() => setCurrentView('dashboard')} initialEqCode={initialEqCode} selectedDept="all" />
             )}
             {currentView === 'settings' && <Settings />}
          </div>
       </main>
 
-      {/* Mobile Bottom Navigation */}
-      <nav className="md:hidden fixed bottom-0 left-0 right-0 bg-white border-t border-slate-200 z-30 pb-safe">
+      {/* Mobile Bottom Navigation (Light Theme Matching) */}
+      <nav className="md:hidden fixed bottom-0 left-0 right-0 bg-white border-t border-slate-200 z-30 pb-safe shadow-md">
         <div className="flex justify-around items-center h-16">
           <MobileNavItem 
              active={currentView === 'dashboard'} 
              onClick={() => setCurrentView('dashboard')} 
              icon={<LayoutDashboard className="w-5 h-5" />} 
-             label="Dashboard" 
+             label="ภาพรวม" 
           />
           <MobileNavItem 
              active={currentView === 'ooc_logs'} 
              onClick={() => setCurrentView('ooc_logs')} 
              icon={<History className="w-5 h-5" />} 
-             label="History" 
+             label="ประวัติ" 
           />
           <MobileNavItem 
              active={currentView === 'check'} 
              onClick={() => setCurrentView('check')} 
              icon={<ClipboardCheck className="w-5 h-5" />} 
-             label="Scan" 
+             label="สแกนตรวจ" 
           />
           <MobileNavItem 
              active={currentView === 'settings'} 
              onClick={() => setCurrentView('settings')} 
              icon={<Settings2 className="w-5 h-5" />} 
-             label="Settings" 
+             label="ตั้งค่า" 
           />
         </div>
       </nav>
@@ -139,23 +188,34 @@ function App() {
   );
 }
 
-function NavItem({ active, onClick, icon, label }: { active: boolean, onClick: () => void, icon: React.ReactNode, label: string }) {
+function NavItem({ active, onClick, icon, label, subLabel }: { active: boolean, onClick: () => void, icon: React.ReactNode, label: string, subLabel: string }) {
   return (
     <button 
       onClick={onClick}
       className={cn(
-        "flex w-full min-w-max items-center gap-3.5 px-4 py-3 rounded-xl font-bold text-[15px] transition-all duration-300 relative overflow-hidden group text-left outline-none",
-        active ? "text-white bg-white/20 shadow-[inset_0_1px_4px_rgba(255,255,255,0.1)] ring-1 ring-white/30" : "text-indigo-200 hover:bg-white/10 hover:text-white"
+        "flex w-full min-w-max items-center gap-3.5 px-4 py-3 rounded-xl font-bold transition-all duration-300 text-left outline-none relative group border border-transparent",
+        active 
+          ? "text-indigo-600 bg-indigo-50/70 border-indigo-100 shadow-[0_2px_10px_rgba(79,70,229,0.04)]" 
+          : "text-slate-500 hover:bg-slate-50 hover:text-slate-900"
       )}
     >
-      <div className={cn(
-        "absolute left-0 top-1/2 -translate-y-1/2 w-1.5 h-0 bg-white rounded-r-full transition-all duration-300 shadow-[0_0_10px_rgba(255,255,255,0.8)]",
-        active ? "h-6 opacity-100" : "opacity-0"
-      )}></div>
-      <span className={cn("relative z-10 transition-colors duration-300", active ? "text-white drop-shadow-md" : "text-indigo-300 group-hover:text-indigo-100")}>{icon}</span>
-      <span className={cn("relative z-10 font-sans tracking-wide transition-colors duration-300", active && "text-white drop-shadow-md")}>{label}</span>
+      {/* Soft vertical stripe for active item */}
+      {active && (
+         <div className="absolute left-0 top-1/2 -translate-y-1/2 w-1 h-5 bg-indigo-600 rounded-r-full shadow-[0_0_8px_rgba(79,70,229,0.5)]"></div>
+      )}
+
+      <span className={cn("transition-colors duration-300 shrink-0 relative z-10", active ? "text-indigo-600" : "text-slate-400 group-hover:text-slate-600")}>{icon}</span>
+      <div className="relative z-10 flex flex-col min-w-0">
+        <span className={cn("font-sans leading-tight transition-colors duration-300 text-xs sm:text-[13px] font-bold", active ? "text-indigo-600" : "text-slate-700 group-hover:text-slate-950")}>{label}</span>
+        <span className={cn("text-[9px] font-bold tracking-wide mt-0.5 opacity-85", active ? "text-indigo-500/80" : "text-slate-400 group-hover:text-slate-500")}>{subLabel}</span>
+      </div>
+      
+      {/* Subtle right arrow on hover when inactive */}
+      {!active && (
+         <ChevronRight className="w-4 h-4 ml-auto opacity-0 group-hover:opacity-100 group-hover:translate-x-1 transition-all text-slate-400 shrink-0" />
+      )}
     </button>
-  )
+  );
 }
 
 function MobileNavItem({ active, onClick, icon, label }: { active: boolean, onClick: () => void, icon: React.ReactNode, label: string }) {
@@ -163,18 +223,18 @@ function MobileNavItem({ active, onClick, icon, label }: { active: boolean, onCl
     <button 
       onClick={onClick}
       className={cn(
-        "flex flex-col items-center justify-center w-full h-full space-y-1.5 transition-colors relative group",
+        "flex flex-col items-center justify-center w-full h-full space-y-0.5 transition-colors relative",
         active ? "text-indigo-600" : "text-slate-400 hover:text-slate-600"
       )}
     >
       <div className={cn(
-         "transition-transform duration-300",
-         active && "-translate-y-1"
+         "transition-transform duration-200",
+         active && "-translate-y-0.5"
       )}>{icon}</div>
-      <span className={cn("text-[10px] font-semibold transition-all duration-300", active ? "opacity-100 -translate-y-1" : "opacity-0 translate-y-2 absolute")}>{label}</span>
-      {active && <div className="absolute top-0 w-10 h-1 bg-indigo-600 rounded-b-full shadow-[0_2px_8px_rgba(79,70,229,0.4)]"></div>}
+      <span className="text-[9px] font-bold tracking-wide leading-none">{label}</span>
+      {active && <div className="absolute top-0 w-8 h-0.5 bg-indigo-600 rounded-b-full"></div>}
     </button>
-  )
+  );
 }
 
 export default App;
