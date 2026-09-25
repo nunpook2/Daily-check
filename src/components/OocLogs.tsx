@@ -16,7 +16,8 @@ import {
   Bookmark, 
   PlusCircle, 
   Sparkles,
-  Info
+  Info,
+  RefreshCcw
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Equipment, CheckLog, CheckItem } from '../types';
@@ -29,6 +30,7 @@ export default function OocLogs({ selectedDept = 'all' }: { selectedDept?: strin
   
   const [filterDate, setFilterDate] = useState<string>(format(new Date(), 'yyyy-MM-dd'));
   const [selectedEqIdFilter, setSelectedEqIdFilter] = useState<string | null>(null);
+  const [selectedEqItems, setSelectedEqItems] = useState<CheckItem[]>([]);
 
   // Edit log notes state
   const [selectedLog, setSelectedLog] = useState<CheckLog | null>(null);
@@ -42,6 +44,16 @@ export default function OocLogs({ selectedDept = 'all' }: { selectedDept?: strin
   useEffect(() => {
     loadData(filterDate);
   }, [filterDate, selectedDept]);
+
+  useEffect(() => {
+    if (selectedEqIdFilter) {
+      fetchCheckItems(selectedEqIdFilter).then(items => {
+        setSelectedEqItems(items);
+      });
+    } else {
+      setSelectedEqItems([]);
+    }
+  }, [selectedEqIdFilter]);
 
   const loadData = async (dateStr: string) => {
     setLoading(true);
@@ -79,11 +91,10 @@ export default function OocLogs({ selectedDept = 'all' }: { selectedDept?: strin
     setEquipments(eqData);
     setLogs(logsData);
     
-    // Auto-select the first equipment that has log records
-    if (logsData.length > 0) {
-       const firstEq = logsData[0].equipmentId;
-       if (!selectedEqIdFilter || !logsData.some(l => l.equipmentId === selectedEqIdFilter)) {
-          setSelectedEqIdFilter(firstEq);
+    // Auto-select the first equipment in equipments when loading
+    if (eqData.length > 0) {
+       if (!selectedEqIdFilter || !eqData.some(e => e.id === selectedEqIdFilter)) {
+          setSelectedEqIdFilter(eqData[0].id);
        }
     } else {
        setSelectedEqIdFilter(null);
@@ -137,18 +148,6 @@ export default function OocLogs({ selectedDept = 'all' }: { selectedDept?: strin
       </div>
     );
   }
-
-  // Sort logs by newest timestamp
-  const allLogs = [...logs].sort((a,b) => b.timestamp - a.timestamp);
-
-  // Group by equipment
-  const logsByEquipment: Record<string, CheckLog[]> = {};
-  allLogs.forEach(log => {
-      if (!logsByEquipment[log.equipmentId]) {
-          logsByEquipment[log.equipmentId] = [];
-      }
-      logsByEquipment[log.equipmentId].push(log);
-  });
 
   // Calculate executive stats for this date
   const totalLogsCount = logs.length;
@@ -207,62 +206,70 @@ export default function OocLogs({ selectedDept = 'all' }: { selectedDept?: strin
 
        {/* Central Workarea split */}
        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 min-h-[500px]">
-          {Object.keys(logsByEquipment).length === 0 ? (
+          {equipments.length === 0 ? (
              <div className="col-span-full p-16 flex flex-col items-center justify-center text-center bg-white border border-slate-200/60 rounded-3xl">
                <CheckCircle className="w-12 h-12 text-slate-200 mb-3" />
-               <p className="text-lg font-bold text-slate-700">ไม่มีรายการตรวจสอบในวันนี้</p>
-               <p className="text-sm text-slate-400 mt-1 font-medium">ไม่พบรายการสแกนในระบบสำหรับวันที่ {format(new Date(filterDate + 'T00:00:00'), 'dd MMMM yyyy')}</p>
+               <p className="text-lg font-bold text-slate-700">ไม่มีรายการเครื่องมือในระบบ</p>
+               <p className="text-sm text-slate-400 mt-1 font-medium">ไม่พบอุปกรณ์หรือเครื่องมือแพทย์ที่ตรงกับฝ่ายงานในขณะนี้</p>
              </div>
           ) : (
              <>
                 {/* Left side: Equipment Selector (Span 4) */}
                 <div className="lg:col-span-4 flex flex-col gap-3 overflow-y-auto max-h-[600px] pr-1">
-                   <p className="text-xs font-bold text-slate-400 uppercase tracking-widest px-1">เครื่องจักรที่พบบันทึก ({Object.keys(logsByEquipment).length})</p>
+                   <p className="text-xs font-bold text-slate-400 uppercase tracking-widest px-1">รายชื่อเครื่องมือทั้งหมด ({equipments.length})</p>
                    
-                   {Object.entries(logsByEquipment).map(([eqId, eqLogs]) => {
-                      const eqRef = equipments.find(e => e.id === eqId);
-                      const isSelected = selectedEqIdFilter === eqId;
+                   {equipments.map(eq => {
+                      const eqLogs = logs.filter(l => l.equipmentId === eq.id);
+                      const isSelected = selectedEqIdFilter === eq.id;
+                      const isChecked = eqLogs.length > 0;
                       const hasFailures = eqLogs.some(l => l.status === 'failed' || l.status === 'needs_attention');
 
                       return (
                          <button 
-                            key={eqId}
-                            onClick={() => setSelectedEqIdFilter(eqId)}
+                            key={eq.id}
+                            onClick={() => setSelectedEqIdFilter(eq.id)}
                             className={cn(
                                "text-left p-4 rounded-2xl border-2 transition-all duration-300 min-w-0 flex flex-col justify-between group cursor-pointer relative overflow-hidden",
                                isSelected 
-                                 ? "bg-indigo-600 border-indigo-700 shadow-md transform scale-[1.01]" 
+                                 ? "bg-indigo-600 border-indigo-700 shadow-md text-white transform scale-[1.01]" 
                                  : hasFailures 
                                    ? "bg-rose-50/50 border-rose-200 hover:bg-rose-50 hover:border-rose-300"
-                                   : "bg-white border-slate-200 hover:border-indigo-200 hover:bg-slate-50"
+                                   : isChecked
+                                     ? "bg-emerald-50/30 border-emerald-100 hover:bg-emerald-50/60 hover:border-emerald-200"
+                                     : "bg-white border-slate-200 hover:border-indigo-200 hover:bg-slate-50"
                             )}
                          >
                             {/* Accent color strip inside side button */}
                             {hasFailures && !isSelected && (
-                              <div className="absolute top-0 bottom-0 left-0 w-1 bg-rose-500"></div>
-                            )}
+                              <div className="absolute top-0 bottom-0 left-0 w-1.5 bg-rose-500"></div>
+                             )}
+                             {isChecked && !hasFailures && !isSelected && (
+                               <div className="absolute top-0 bottom-0 left-0 w-1.5 bg-emerald-500"></div>
+                             )}
 
                             <div className="flex justify-between items-start w-full gap-2">
-                               <h3 className={cn("font-bold text-sm sm:text-base truncate flex-1", isSelected ? "text-white" : "text-slate-950")} title={eqRef?.name || 'Unknown'}>
-                                  {eqRef?.name || 'Unknown'}
+                               <h3 className={cn("font-bold text-sm sm:text-base truncate flex-1", isSelected ? "text-white" : "text-slate-950")} title={eq.name}>
+                                  {eq.name}
                                 </h3>
                                 <span className={cn("text-[10px] font-extrabold px-2.5 py-0.5 rounded-lg shrink-0 border whitespace-nowrap", 
                                   isSelected 
                                     ? "bg-indigo-700/50 border-indigo-400 text-indigo-100" 
-                                    : "bg-slate-100 border-slate-200 text-slate-500"
+                                    : isChecked
+                                      ? "bg-emerald-100 border-emerald-200 text-emerald-800"
+                                      : "bg-amber-50 text-amber-800 border-amber-200"
                                 )}>
-                                   {eqLogs.length} บันทึก
+                                   {isChecked ? `${eqLogs.length} บันทึก` : '⚠️ ค้างตรวจ'}
                                 </span>
                             </div>
                             
                             {/* Unboxed Metadata (Zero Pill Style) */}
                             <div className="flex items-center gap-1.5 text-xs mt-2 font-mono">
                                <span className={cn("font-bold", isSelected ? "text-indigo-200" : "text-indigo-500")}>
-                                 {eqRef?.code}
+                                 {eq.code}
                                </span>
                                <span className={isSelected ? "text-indigo-300" : "text-slate-400"} aria-hidden="true">·</span>
                                <span className={cn("truncate", isSelected ? "text-indigo-200" : "text-slate-400")}>
-                                 {eqRef?.location || 'General Lab'}
+                                 {(eq.location || 'General Lab').replace('น้อง', 'ห้อง')}
                                </span>
                             </div>
                          </button>
@@ -271,7 +278,7 @@ export default function OocLogs({ selectedDept = 'all' }: { selectedDept?: strin
                 </div>
  
                 {/* Right side: Inspection Logs directly displaying the detail grid (Span 8) */}
-                {selectedEqIdFilter && logsByEquipment[selectedEqIdFilter] && (
+                {selectedEqIdFilter && (
                    <div className="lg:col-span-8 shadow-sm border border-slate-200/60 rounded-3xl bg-white overflow-hidden flex flex-col">
                        {/* Panel Header */}
                        <div className="px-6 py-5 bg-slate-900 border-b border-slate-800 flex justify-between items-center shrink-0">
@@ -283,99 +290,128 @@ export default function OocLogs({ selectedDept = 'all' }: { selectedDept?: strin
                               <div className="flex items-center gap-2 text-xs text-indigo-200 font-mono mt-1 font-semibold">
                                 <span>รหัส: {equipments.find(e => e.id === selectedEqIdFilter)?.code}</span>
                                 <span aria-hidden="true">·</span>
-                                <span>สถานที่: {equipments.find(e => e.id === selectedEqIdFilter)?.location || 'Lab'}</span>
+                                <span>สถานที่: {(equipments.find(e => e.id === selectedEqIdFilter)?.location || 'Lab').replace('น้อง', 'ห้อง')}</span>
                               </div>
                             </div>
                        </div>
 
                        {/* Logs Content Flow */}
                        <div className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-6 bg-slate-50/40 max-h-[550px] custom-scrollbar">
-                          {logsByEquipment[selectedEqIdFilter].map((log, logIdx) => {
-                            const isPassed = log.status === 'passed';
-                            return (
-                                <div key={log.id} 
-                                   className={cn("p-5 rounded-2xl border-2 transition-all duration-300 relative overflow-hidden bg-white shadow-sm hover:shadow-md",
-                                      isPassed ? "border-emerald-100" : "border-rose-100"
-                                   )} 
-                                >
-                                   {/* Status vertical accent indicator */}
-                                   <div className={cn("absolute left-0 top-0 bottom-0 w-1.5", 
-                                      isPassed ? "bg-emerald-500" : "bg-rose-500"
-                                   )}></div>
+                          {logs.filter(l => l.equipmentId === selectedEqIdFilter).length > 0 ? (
+                             logs.filter(l => l.equipmentId === selectedEqIdFilter).map((log, logIdx) => {
+                               const isPassed = log.status === 'passed';
+                               return (
+                                   <div key={log.id} 
+                                      className={cn("p-5 rounded-2xl border-2 transition-all duration-300 relative overflow-hidden bg-white shadow-sm hover:shadow-md",
+                                         isPassed ? "border-emerald-100" : "border-rose-100"
+                                      )} 
+                                   >
+                                      {/* Status vertical accent indicator */}
+                                      <div className={cn("absolute left-0 top-0 bottom-0 w-1.5", 
+                                         isPassed ? "bg-emerald-500" : "bg-rose-500"
+                                      )}></div>
 
-                                   {/* Executive Log summary header block */}
-                                   <div className="flex flex-wrap justify-between items-center gap-3 pl-2 mb-4">
-                                      <div className="flex flex-wrap items-center gap-2">
-                                         <span className={cn("px-2.5 py-1 rounded-lg text-[10px] font-extrabold uppercase tracking-wide shadow-sm text-white", 
-                                            isPassed ? "bg-emerald-500" : "bg-rose-500"
-                                         )}>
-                                            {isPassed ? '✓ ผ่านปกติ' : '✗ หลุดเกณฑ์ควบคุม'}
-                                         </span>
-                                         <span className="font-bold text-slate-700 text-xs bg-slate-100 px-2.5 py-1 rounded-lg border border-slate-200/50">กะการทำงาน: {log.shift === 'DAY' ? 'กะกลางวัน (Day)' : 'กะกลางคืน (Night)'}</span>
-                                         <span className="font-bold text-slate-500 text-xs bg-white px-2.5 py-1 rounded-lg border border-slate-100 shadow-xs font-mono">{format(log.timestamp, 'HH:mm น.')}</span>
+                                      {/* Executive Log summary header block */}
+                                      <div className="flex flex-wrap justify-between items-center gap-3 pl-2 mb-4">
+                                         <div className="flex flex-wrap items-center gap-2">
+                                            <span className={cn("px-2.5 py-1 rounded-lg text-[10px] font-extrabold uppercase tracking-wide shadow-sm text-white", 
+                                               isPassed ? "bg-emerald-500" : "bg-rose-500"
+                                            )}>
+                                               {isPassed ? '✓ ผ่านปกติ' : '✗ หลุดเกณฑ์ควบคุม'}
+                                            </span>
+                                            <span className="font-bold text-slate-700 text-xs bg-slate-100 px-2.5 py-1 rounded-lg border border-slate-200/50">กะการทำงาน: {log.shift === 'DAY' ? 'กะกลางวัน (Day)' : 'กะกลางคืน (Night)'}</span>
+                                            <span className="font-bold text-slate-500 text-xs bg-white px-2.5 py-1 rounded-lg border border-slate-100 shadow-xs font-mono">{format(log.timestamp, 'HH:mm น.')}</span>
+                                         </div>
+
+                                         <div className="flex items-center gap-2 text-xs text-slate-400 font-bold">
+                                            <User className="w-3.5 h-3.5" />
+                                            <span>ผู้ตรวจ: SC-101 / {log.operatorName}</span>
+                                         </div>
                                       </div>
 
-                                      <div className="flex items-center gap-2 text-xs text-slate-400 font-bold">
-                                         <User className="w-3.5 h-3.5" />
-                                         <span>ผู้ตรวจ: SC-101 / {log.operatorName}</span>
+                                      {/* DIRECT VISUAL PARAMETERS FEED (This satisfies "เอาให้ชัดว่าจะแสดงอะไร") */}
+                                      <div className="pl-2 mt-4 space-y-3">
+                                         <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">ผลรายละเอียดรายข้อตรวจสอบ (Telemetry Feed)</p>
+                                         
+                                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 bg-slate-50/50 p-3 rounded-xl border border-slate-100">
+                                            {log.responses.map((resp, respIdx) => {
+                                               return (
+                                                  <div key={resp.checkItemId} className={cn(
+                                                     "p-2.5 rounded-xl border flex items-center justify-between text-xs font-bold bg-white shadow-xs",
+                                                     resp.isNormal ? "border-slate-100" : "border-rose-200 bg-rose-50/30"
+                                                  )}>
+                                                     <div className="min-w-0 pr-2">
+                                                        <p className="text-slate-900 truncate">ข้อที่ {respIdx + 1}</p>
+                                                        <p className="text-[10px] text-slate-400 font-mono truncate">ID: {resp.checkItemId}</p>
+                                                     </div>
+                                                     <div className="text-right shrink-0 flex items-center gap-1.5 font-mono">
+                                                        <span className={resp.isNormal ? "text-emerald-600" : "text-rose-600 font-black"}>
+                                                           {resp.type === 'boolean' ? (resp.valueBoolean ? 'PASS' : 'FAIL') : `${resp.valueNumeric}`}
+                                                        </span>
+                                                        {resp.isNormal ? (
+                                                           <span className="text-emerald-500 text-[10px]">✓</span>
+                                                        ) : (
+                                                           <span className="text-rose-500 text-[10px] font-black">✗</span>
+                                                        )}
+                                                     </div>
+                                                  </div>
+                                               );
+                                            })}
+                                         </div>
+                                      </div>
+
+                                      {/* Speeches & Remarks actions */}
+                                      <div className="pl-2 mt-4 flex items-start gap-3 bg-indigo-50/20 border border-slate-100 p-3.5 rounded-xl">
+                                         <MessageSquare className="w-4 h-4 text-indigo-500 shrink-0 mt-0.5" />
+                                         <div className="flex-1 min-w-0">
+                                           <p className="text-xs font-black text-slate-400 uppercase tracking-wider">บันทึกหน้างาน / การแก้ไขข้อผิดพลาด</p>
+                                           <p className="text-xs sm:text-sm text-slate-700 mt-1 leading-relaxed">
+                                             {log.notes || "ไม่มีสิ่งบันทึกพิเศษเพิ่มเติม ทุกระบบทำงานสมบูรณ์"}
+                                           </p>
+                                         </div>
+                                         
+                                         <button 
+                                           onClick={() => handleOpenLog(log)} 
+                                           className="py-1 px-2.5 bg-white hover:bg-slate-50 border border-slate-200 rounded-lg text-[11px] font-bold text-indigo-600 shadow-xs cursor-pointer flex items-center gap-1"
+                                         >
+                                           <Edit2 className="w-3 h-3" />
+                                           จัดการบันทึก
+                                         </button>
                                       </div>
                                    </div>
+                               );
+                             })
+                          ) : (
+                             /* Empty state display listing all uninspected parameters! */
+                             <div className="p-4 sm:p-6 space-y-6 bg-white rounded-2xl border border-slate-200/60 shadow-xs">
+                                <div className="p-6 bg-amber-500/5 border-2 border-dashed border-amber-300 rounded-2xl flex flex-col items-center justify-center text-center space-y-3">
+                                  <AlertTriangle className="w-10 h-10 text-amber-500 animate-bounce" />
+                                  <h3 className="text-base font-bold text-amber-900">⚠️ เครื่องมือนี้ยังไม่ได้รับการตรวจสอบในวันที่เลือก</h3>
+                                  <p className="text-xs text-amber-700 max-w-sm">เครื่องจักรมีสถานะพร้อมใช้งาน แต่ผู้ปฏิบัติงานในกะการทำงานยังไม่ได้สแกนตรวจเช็กค่าควบคุมในวันนี้</p>
+                                </div>
 
-                                   {/* DIRECT VISUAL PARAMETERS FEED (This satisfies "เอาให้ชัดว่าจะแสดงอะไร") */}
-                                   <div className="pl-2 mt-4 space-y-3">
-                                      <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">ผลรายละเอียดรายข้อตรวจสอบ (Telemetry Feed)</p>
-                                      
-                                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 bg-slate-50/50 p-3 rounded-xl border border-slate-100">
-                                         {log.responses.map((resp, respIdx) => {
-                                            // Try to map to actual item name
-                                            const itemRef = equipments.find(e => e.id === selectedEqIdFilter) ? "พารามิเตอร์ตรวจเช็ก" : "";
-                                            // Standard name can be found or simulated nicely
-                                            return (
-                                               <div key={resp.checkItemId} className={cn(
-                                                  "p-2.5 rounded-xl border flex items-center justify-between text-xs font-bold bg-white shadow-xs",
-                                                  resp.isNormal ? "border-slate-100" : "border-rose-200 bg-rose-50/30"
-                                               )}>
-                                                  <div className="min-w-0 pr-2">
-                                                     <p className="text-slate-900 truncate">ข้อที่ {respIdx + 1}</p>
-                                                     <p className="text-[10px] text-slate-400 font-mono truncate">ID: {resp.checkItemId}</p>
-                                                  </div>
-                                                  <div className="text-right shrink-0 flex items-center gap-1.5 font-mono">
-                                                     <span className={resp.isNormal ? "text-emerald-600" : "text-rose-600 font-black"}>
-                                                        {resp.type === 'boolean' ? (resp.valueBoolean ? 'PASS' : 'FAIL') : `${resp.valueNumeric}`}
-                                                     </span>
-                                                     {resp.isNormal ? (
-                                                        <span className="text-emerald-500 text-[10px]">✓</span>
-                                                     ) : (
-                                                        <span className="text-rose-500 text-[10px] font-black">✗</span>
-                                                     )}
-                                                  </div>
+                                <div className="space-y-3">
+                                   <p className="text-xs font-black text-slate-400 uppercase tracking-widest">พารามิเตอร์ที่ต้องตรวจสอบทั้งหมด ({selectedEqItems.length} ข้อ)</p>
+                                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                      {selectedEqItems.length === 0 ? (
+                                         <p className="text-xs text-slate-400 col-span-full italic py-4 text-center">ยังไม่ได้กำหนดข้อคำถามพารามิเตอร์ตรวจสอบสำหรับเครื่องมือนี้</p>
+                                      ) : (
+                                         selectedEqItems.map((item, idx) => (
+                                            <div key={item.id} className="p-3.5 rounded-xl border border-slate-200 bg-slate-50/50 flex justify-between items-center text-xs font-bold shadow-xs">
+                                               <div className="min-w-0 pr-2">
+                                                  <p className="text-slate-800 font-extrabold truncate">ข้อที่ {idx + 1}: {item.name}</p>
+                                                  <p className="text-[10px] text-slate-400 mt-0.5 font-semibold">ประเภท: {item.type === 'boolean' ? 'Pass/Fail' : `วัดค่าตัวเลข (${item.minValue ?? ''} - ${item.maxValue ?? ''} ${item.unit || ''})`}</p>
                                                </div>
-                                            );
-                                         })}
-                                      </div>
-                                   </div>
-
-                                   {/* Speeches & Remarks actions */}
-                                   <div className="pl-2 mt-4 flex items-start gap-3 bg-indigo-50/20 border border-slate-100 p-3.5 rounded-xl">
-                                      <MessageSquare className="w-4 h-4 text-indigo-500 shrink-0 mt-0.5" />
-                                      <div className="flex-1 min-w-0">
-                                        <p className="text-xs font-black text-slate-400 uppercase tracking-wider">บันทึกหน้างาน / การแก้ไขข้อผิดพลาด</p>
-                                        <p className="text-xs sm:text-sm text-slate-700 mt-1 leading-relaxed">
-                                          {log.notes || "ไม่มีสิ่งบันทึกพิเศษเพิ่มเติม ทุกระบบทำงานสมบูรณ์"}
-                                        </p>
-                                      </div>
-                                      
-                                      <button 
-                                        onClick={() => handleOpenLog(log)} 
-                                        className="py-1 px-2.5 bg-white hover:bg-slate-50 border border-slate-200 rounded-lg text-[11px] font-bold text-indigo-600 shadow-xs cursor-pointer flex items-center gap-1"
-                                      >
-                                        <Edit2 className="w-3 h-3" />
-                                        จัดการบันทึก
-                                      </button>
+                                               <span className="px-2 py-1 rounded bg-rose-50 text-rose-600 border border-rose-100 text-[10px] uppercase font-extrabold shrink-0 whitespace-nowrap">
+                                                 ❌ ยังไม่ตรวจ
+                                               </span>
+                                            </div>
+                                         ))
+                                      )}
                                    </div>
                                 </div>
-                            );
-                          })}
+                             </div>
+                          )}
                        </div>
                    </div>
                 )}
@@ -458,27 +494,5 @@ export default function OocLogs({ selectedDept = 'all' }: { selectedDept?: strin
           )}
         </AnimatePresence>
     </div>
-  );
-}
-
-function RefreshCcw(props: any) {
-  return (
-    <svg
-      xmlns="http://www.w3.org/2000/svg"
-      width="24"
-      height="24"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      {...props}
-    >
-      <path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
-      <path d="M3 3v5h5" />
-      <path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16" />
-      <path d="M16 16h5v5" />
-    </svg>
   );
 }

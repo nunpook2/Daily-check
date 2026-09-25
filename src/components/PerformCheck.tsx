@@ -511,7 +511,7 @@ export default function PerformCheck({ onSaved, initialEqCode, selectedDept = 'a
                         <span className="px-2 py-0.5 rounded-md bg-white/10 text-white text-[9px] font-mono font-bold tracking-widest border border-white/10">{selectedEq.code}</span>
                      </div>
                      <h2 className="text-xl sm:text-2xl font-black text-white leading-tight truncate">{selectedEq.name}</h2>
-                     <p className="text-indigo-300 text-[10px] sm:text-xs font-semibold truncate mt-0.5">สถานที่: {selectedEq.location || 'คลังทดสอบ'}</p>
+                     <p className="text-indigo-300 text-[10px] sm:text-xs font-semibold truncate mt-0.5">สถานที่: {(selectedEq.location || 'คลังทดสอบ').replace('น้อง', 'ห้อง')}</p>
                   </div>
                 </div>
              </div>
@@ -677,11 +677,11 @@ export default function PerformCheck({ onSaved, initialEqCode, selectedDept = 'a
                                               required={item.isRequired}
                                               value={responses[item.id] || ''}
                                               onChange={e => setResponses({...responses, [item.id]: e.target.value})}
-                                              placeholder="ระบุตัวเลขค่าที่วัดได้..."
-                                              className="w-full text-center px-4 py-3 bg-slate-900 border-2 border-slate-800 rounded-xl focus:outline-none focus:border-indigo-500 font-mono text-lg font-black text-emerald-400 shadow-inner"
+                                              placeholder="ระบุตัวเลข..."
+                                              className="w-full text-center px-4 py-3 bg-slate-50 border-2 border-slate-200 focus:bg-white rounded-xl focus:outline-none focus:border-indigo-500 font-mono text-lg font-black text-slate-800 shadow-xs"
                                             />
                                             {item.unit && (
-                                              <span className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-500 font-bold text-xs uppercase">{item.unit}</span>
+                                              <span className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400 font-bold text-xs uppercase">{item.unit}</span>
                                             )}
                                          </div>
 

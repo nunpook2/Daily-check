@@ -428,14 +428,14 @@ export default function Dashboard({ selectedDept = 'all' }: { selectedDept?: str
                    key={eq.id} 
                    onClick={() => handleViewHistory(eq)}
                    className={cn(
-                     "p-4 border rounded-2xl cursor-pointer transition-all duration-300 hover:shadow-lg hover:-translate-y-1 flex flex-col justify-between group",
+                     "p-4 border rounded-2xl cursor-pointer transition-all duration-300 hover:shadow-lg hover:-translate-y-1 flex flex-col justify-between group bg-white shadow-xs",
                      isMaint 
-                      ? "bg-amber-50/40 border-amber-200/80 hover:bg-amber-50/70" 
+                      ? "border-l-4 border-l-amber-500 border-amber-200" 
                       : hasFailed
-                        ? "bg-rose-50/40 border-rose-200/80 hover:bg-rose-50"
+                        ? "border-l-4 border-l-rose-500 border-rose-200"
                         : isChecked
-                          ? "bg-emerald-50/30 border-emerald-100 hover:bg-emerald-50/60"
-                          : "bg-white border-slate-200/70 hover:border-indigo-200"
+                          ? "border-l-4 border-l-emerald-500 border-emerald-100"
+                          : "border-l-4 border-l-slate-300 border-slate-200/80 hover:border-l-indigo-500"
                    )}
                 >
                    <div>
@@ -445,11 +445,11 @@ export default function Dashboard({ selectedDept = 'all' }: { selectedDept?: str
                            <div className={cn(
                              "w-10 h-10 rounded-xl border flex items-center justify-center transition-all group-hover:scale-110",
                              isMaint 
-                              ? "bg-amber-100/80 border-amber-200 text-amber-700" 
+                              ? "bg-amber-50 border-amber-200 text-amber-700" 
                               : hasFailed
-                                ? "bg-rose-100/80 border-rose-200 text-rose-700"
+                                ? "bg-rose-50 border-rose-200 text-rose-700"
                                 : isChecked
-                                  ? "bg-emerald-100/80 border-emerald-200 text-emerald-700"
+                                  ? "bg-emerald-50 border-emerald-200 text-emerald-700"
                                   : "bg-slate-50 border-slate-200/60 text-slate-500"
                            )}>
                               {isMaint ? (
@@ -470,7 +470,7 @@ export default function Dashboard({ selectedDept = 'all' }: { selectedDept?: str
                              <div className="flex items-center gap-1.5 text-[11px] text-slate-400 mt-0.5">
                                <span>{eq.code}</span>
                                <span aria-hidden="true">·</span>
-                               <span className="truncate max-w-[100px]">{eq.location || 'คลังวิจัย'}</span>
+                               <span className="truncate max-w-[100px]">{(eq.location || 'คลังวิจัย').replace('น้อง', 'ห้อง')}</span>
                              </div>
                            </div>
                         </div>
@@ -570,7 +570,7 @@ export default function Dashboard({ selectedDept = 'all' }: { selectedDept?: str
                           <span aria-hidden="true">·</span>
                           <span className="font-mono text-indigo-600 font-bold">{historyEq.code}</span>
                           <span aria-hidden="true">·</span>
-                          <span>สถานที่: {historyEq.location || 'Laboratory'}</span>
+                          <span>สถานที่: {(historyEq.location || 'Laboratory').replace('น้อง', 'ห้อง')}</span>
                         </div>
                      </div>
                      <button onClick={() => { setHistoryDateFilter(''); setHistoryEq(null); }} className="p-2 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-full transition-colors">
