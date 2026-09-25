@@ -423,19 +423,19 @@ export default function Dashboard({ selectedDept = 'all' }: { selectedDept?: str
               const isChecked = eqLogsToday.length > 0;
               const hasFailed = eqLogsToday.some(l => l.status === 'failed' || l.status === 'needs_attention');
 
-              return (
+               return (
                 <div 
                    key={eq.id} 
                    onClick={() => handleViewHistory(eq)}
                    className={cn(
                      "p-4 border rounded-2xl cursor-pointer transition-all duration-300 hover:shadow-lg hover:-translate-y-1 flex flex-col justify-between group bg-white shadow-xs",
                      isMaint 
-                      ? "border-l-4 border-l-amber-500 border-amber-200" 
+                      ? "border-l-4 border-l-red-600 border-red-200 bg-red-50/10 hover:bg-red-50/30" 
                       : hasFailed
-                        ? "border-l-4 border-l-rose-500 border-rose-200"
+                        ? "border-l-4 border-l-rose-500 border-rose-200 bg-rose-50/10 hover:bg-rose-50/30"
                         : isChecked
-                          ? "border-l-4 border-l-emerald-500 border-emerald-100"
-                          : "border-l-4 border-l-slate-300 border-slate-200/80 hover:border-l-indigo-500"
+                          ? "border-l-4 border-l-emerald-500 border-emerald-100 bg-emerald-50/10 hover:bg-emerald-50/30"
+                          : "border-l-4 border-l-amber-500 border-amber-200 bg-amber-50/10 hover:bg-amber-50/30"
                    )}
                 >
                    <div>
@@ -445,21 +445,21 @@ export default function Dashboard({ selectedDept = 'all' }: { selectedDept?: str
                            <div className={cn(
                              "w-10 h-10 rounded-xl border flex items-center justify-center transition-all group-hover:scale-110",
                              isMaint 
-                              ? "bg-amber-50 border-amber-200 text-amber-700" 
+                              ? "bg-red-50 border-red-200 text-red-600" 
                               : hasFailed
-                                ? "bg-rose-50 border-rose-200 text-rose-700"
+                                ? "bg-rose-50 border-rose-200 text-rose-600"
                                 : isChecked
                                   ? "bg-emerald-50 border-emerald-200 text-emerald-700"
-                                  : "bg-slate-50 border-slate-200/60 text-slate-500"
+                                  : "bg-amber-50 border-amber-200 text-amber-700"
                            )}>
                               {isMaint ? (
-                                <Wrench className="w-5 h-5" />
+                                <Wrench className="w-5 h-5 text-red-600" />
                               ) : hasFailed ? (
                                 <AlertTriangle className="w-5 h-5 text-rose-600 animate-pulse" />
                               ) : isChecked ? (
                                 <CheckCircle className="w-5 h-5 text-emerald-600" />
                               ) : (
-                                <ServerCrash className="w-5 h-5 text-slate-400 group-hover:text-indigo-500" />
+                                <Clock className="w-5 h-5 text-amber-500 animate-pulse" />
                               )}
                            </div>
                            <div>
@@ -487,9 +487,9 @@ export default function Dashboard({ selectedDept = 'all' }: { selectedDept?: str
                    {/* Visual Status Pills (Only Interactive / Informational, Beautiful Segmented Look) */}
                    <div className="mt-4 pt-3 border-t border-slate-100 flex flex-col gap-2">
                       {isMaint ? (
-                        <div className="py-2 rounded-xl text-[11px] font-bold uppercase text-center bg-amber-500 text-white shadow-sm flex items-center justify-center gap-1.5">
+                        <div className="py-2.5 rounded-xl text-[11px] font-extrabold uppercase text-center bg-gradient-to-r from-red-600 to-red-500 text-white shadow-md flex items-center justify-center gap-1.5 animate-pulse">
                            <Wrench className="w-3.5 h-3.5" />
-                           ปิดเพื่อซ่อมบำรุง
+                           ปิดเพื่อซ่อมบำรุง (Break Down)
                         </div>
                       ) : (
                         <div className="flex items-center gap-2">
@@ -497,7 +497,7 @@ export default function Dashboard({ selectedDept = 'all' }: { selectedDept?: str
                              <div className={cn("px-3 py-2 rounded-xl border text-[10px] font-bold text-center flex-1 flex flex-col items-center justify-center shadow-sm",
                                 dailyStatus === 'passed' ? "bg-emerald-500/10 border-emerald-300 text-emerald-800" :
                                 (dailyStatus === 'failed' || dailyStatus === 'needs_attention') ? "bg-rose-500/10 border-rose-300 text-rose-800" :
-                                "bg-amber-500/10 border-amber-300 text-amber-800"
+                                "bg-amber-500/10 border-amber-300 text-amber-800 animate-pulse"
                              )}>
                                 <span className="opacity-60 text-[9px] uppercase tracking-wider mb-0.5">ประจำวัน</span>
                                 <span className="font-extrabold">
