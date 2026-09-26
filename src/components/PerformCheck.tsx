@@ -298,6 +298,13 @@ export default function PerformCheck({ onSaved, initialEqCode, selectedDept = 'a
     e.preventDefault();
     if (!selectedEq || !operatorId) return;
 
+    // Validate that all required items are answered
+    const unansweredItem = filteredItems.find(item => item.isRequired && (responses[item.id!] === undefined || responses[item.id!] === ''));
+    if (unansweredItem) {
+      alert(`⚠️ กรุณาทำรายการตรวจหรือระบุค่าสำหรับข้อ: "${unansweredItem.name}" ก่อนส่งบันทึก`);
+      return;
+    }
+
     setSaving(true);
     let allNormal = true;
     const finalResponses: CheckResponse[] = filteredItems.map(item => {
@@ -308,6 +315,7 @@ export default function PerformCheck({ onSaved, initialEqCode, selectedDept = 'a
        const resp: any = {
          checkItemId: item.id,
          type: item.type,
+         itemName: item.name,
          isNormal: normal
        };
        if (item.type === 'boolean') {
@@ -526,48 +534,48 @@ export default function PerformCheck({ onSaved, initialEqCode, selectedDept = 'a
                   
                   {/* Operator ID Dropdown styled beautifully */}
                   <div>
-                    <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">ชื่อพนักงานผู้รับผิดชอบตรวจเช็ก *</label>
+                    <label className="block text-xs font-black text-slate-800 uppercase tracking-wider mb-2">ชื่อพนักงานผู้รับผิดชอบตรวจเช็ก *</label>
                     <div className="relative">
                       <select 
                         required 
                         value={operatorId}
                         onChange={e => setOperatorId(e.target.value)}
-                        className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:bg-white text-xs sm:text-sm font-bold text-slate-800 cursor-pointer appearance-none outline-none"
+                        className="w-full px-4 py-3 bg-slate-100 border-2 border-slate-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:bg-white text-sm sm:text-base font-black text-slate-900 cursor-pointer appearance-none outline-none"
                       >
-                        <option value="">-- แตะเพื่อเลือกรายชื่อ --</option>
-                        {operators.map(op => <option key={op.id} value={op.employeeId}>{op.name} ({op.employeeId})</option>)}
-                        <option value="sc-101">Sarah Connor (SC-101)</option>
-                        <option value="guest">ผู้ตรวจสำรอง / บุคคลอื่น (Guest)</option>
+                        <option value="" className="text-slate-900 font-bold">-- แตะเพื่อเลือกรายชื่อ --</option>
+                        {operators.map(op => <option key={op.id} value={op.employeeId} className="text-slate-900 font-bold">{op.name} ({op.employeeId})</option>)}
+                        <option value="sc-101" className="text-slate-900 font-bold">Sarah Connor (SC-101)</option>
+                        <option value="guest" className="text-slate-900 font-bold">ผู้ตรวจสำรอง / บุคคลอื่น (Guest)</option>
                       </select>
-                      <div className="absolute right-4 top-1/2 -translate-y-1/2 pointer-events-none text-slate-400 font-bold text-xs">▼</div>
+                      <div className="absolute right-4 top-1/2 -translate-y-1/2 pointer-events-none text-slate-800 font-extrabold text-sm">▼</div>
                     </div>
                   </div>
 
                   {/* Shift Selection Styled as Large Touchable Segmented Control Cards */}
                   <div>
-                    <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">กะการทำงาน (Shift Selection) *</label>
+                    <label className="block text-xs font-black text-slate-800 uppercase tracking-wider mb-2">กะการทำงาน (Shift Selection) *</label>
                     <div className="grid grid-cols-3 gap-2">
-                      <ShiftButton active={shift === 'DAY'} onClick={() => setShift('DAY')} icon={<Sun className="w-4 h-4 text-amber-500" />} label="กะกลางวัน" />
-                      <ShiftButton active={shift === 'NIGHT'} onClick={() => setShift('NIGHT')} icon={<Moon className="w-4 h-4 text-indigo-400" />} label="กะกลางคืน" />
-                      <ShiftButton active={shift === 'OTHER'} onClick={() => setShift('OTHER')} icon={<Cog className="w-4 h-4 text-slate-400" />} label="กะพิเศษ" />
+                      <ShiftButton active={shift === 'DAY'} onClick={() => setShift('DAY')} icon={<Sun className="w-5 h-5 text-amber-600" />} label="กะกลางวัน" />
+                      <ShiftButton active={shift === 'NIGHT'} onClick={() => setShift('NIGHT')} icon={<Moon className="w-5 h-5 text-indigo-600" />} label="กะกลางคืน" />
+                      <ShiftButton active={shift === 'OTHER'} onClick={() => setShift('OTHER')} icon={<Cog className="w-5 h-5 text-slate-700" />} label="กะพิเศษ" />
                     </div>
                   </div>
 
                   {/* Cycle check selection */}
                   <div>
-                    <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">วัตถุประสงค์ในการตรวจเช็ก *</label>
+                    <label className="block text-xs font-black text-slate-800 uppercase tracking-wider mb-2">วัตถุประสงค์ในการตรวจเช็ก *</label>
                     <div className="relative">
                       <select 
                         required 
                         value={checkType}
                         onChange={e => setCheckType(e.target.value)}
-                        className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:bg-white text-xs sm:text-sm font-bold text-slate-800 cursor-pointer appearance-none outline-none"
+                        className="w-full px-4 py-3 bg-slate-100 border-2 border-slate-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:bg-white text-sm sm:text-base font-black text-slate-900 cursor-pointer appearance-none outline-none"
                       >
-                        <option value="all">ตรวจสอบพารามิเตอร์ปกติทั้งหมด</option>
-                        <option value="daily">ตรวจสอบประจำวันเท่านั้น (Daily Only)</option>
-                        <option value="on-use">ตรวจสอบเมื่อใช้งานเครื่อง (On Use Only)</option>
+                        <option value="all" className="text-slate-900 font-bold">ตรวจสอบพารามิเตอร์ปกติทั้งหมด</option>
+                        <option value="daily" className="text-slate-900 font-bold">ตรวจสอบประจำวันเท่านั้น (Daily Only)</option>
+                        <option value="on-use" className="text-slate-900 font-bold">ตรวจสอบเมื่อใช้งานเครื่อง (On Use Only)</option>
                       </select>
-                      <div className="absolute right-4 top-1/2 -translate-y-1/2 pointer-events-none text-slate-400 font-bold text-xs">▼</div>
+                      <div className="absolute right-4 top-1/2 -translate-y-1/2 pointer-events-none text-slate-800 font-extrabold text-sm">▼</div>
                     </div>
                   </div>
                 </div>
@@ -603,7 +611,7 @@ export default function PerformCheck({ onSaved, initialEqCode, selectedDept = 'a
                                <div className={cn(
                                  "absolute left-0 top-0 bottom-0 w-1",
                                  hasValue 
-                                   ? isNormal ? "bg-emerald-500" : "bg-rose-500 animate-pulse"
+                                   ? isNormal ? "bg-emerald-500" : "bg-rose-500"
                                    : "bg-slate-200"
                                )}></div>
                                
@@ -648,7 +656,7 @@ export default function PerformCheck({ onSaved, initialEqCode, selectedDept = 'a
                                         className={cn(
                                           "py-3.5 px-4 rounded-xl border-2 flex items-center justify-center gap-2 transition-all cursor-pointer shadow-xs font-bold text-xs sm:text-sm active:scale-95",
                                           responses[item.id] === 'false' 
-                                            ? "bg-rose-500 border-rose-600 text-white shadow-rose-500/10 animate-pulse" 
+                                            ? "bg-rose-500 border-rose-600 text-white shadow-rose-500/10" 
                                             : "bg-white border-slate-200 text-slate-600 hover:bg-slate-50"
                                         )}
                                       >

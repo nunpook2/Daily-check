@@ -229,7 +229,7 @@ export default function OocLogs({ selectedDept = 'all' }: { selectedDept?: strin
                             key={eq.id}
                             onClick={() => setSelectedEqIdFilter(eq.id)}
                             className={cn(
-                               "text-left p-4 rounded-2xl border-2 transition-all duration-300 min-w-0 flex flex-col justify-between group cursor-pointer relative overflow-hidden",
+                               "shrink-0 text-left p-4 rounded-2xl border-2 transition-all duration-300 min-w-0 flex flex-col justify-between group cursor-pointer relative overflow-hidden",
                                isSelected 
                                  ? "bg-indigo-600 border-indigo-700 shadow-md text-white transform scale-[1.01]" 
                                  : hasFailures 
@@ -334,29 +334,84 @@ export default function OocLogs({ selectedDept = 'all' }: { selectedDept?: strin
                                          <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">ผลรายละเอียดรายข้อตรวจสอบ (Telemetry Feed)</p>
                                          
                                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 bg-slate-50/50 p-3 rounded-xl border border-slate-100">
-                                            {log.responses.map((resp, respIdx) => {
+                                            {(() => {
+                                               const matchedResponseItemIds = new Set();
+                                               const renderedItems = selectedEqItems.map((item) => {
+                                                  const resp = log.responses.find(r => r.checkItemId === item.id || (r.itemName && r.itemName.toLowerCase() === item.name.toLowerCase()));
+                                                  if (resp) matchedResponseItemIds.add(resp.checkItemId);
+                                                  return { item, resp };
+                                               });
+                                               const orphanResponses = log.responses.filter(r => !matchedResponseItemIds.has(r.checkItemId));
+                                               
                                                return (
-                                                  <div key={resp.checkItemId} className={cn(
-                                                     "p-2.5 rounded-xl border flex items-center justify-between text-xs font-bold bg-white shadow-xs",
-                                                     resp.isNormal ? "border-slate-100" : "border-rose-200 bg-rose-50/30"
-                                                  )}>
-                                                     <div className="min-w-0 pr-2">
-                                                        <p className="text-slate-900 truncate">ข้อที่ {respIdx + 1}</p>
-                                                        <p className="text-[10px] text-slate-400 font-mono truncate">ID: {resp.checkItemId}</p>
-                                                     </div>
-                                                     <div className="text-right shrink-0 flex items-center gap-1.5 font-mono">
-                                                        <span className={resp.isNormal ? "text-emerald-600" : "text-rose-600 font-black"}>
-                                                           {resp.type === 'boolean' ? (resp.valueBoolean ? 'PASS' : 'FAIL') : `${resp.valueNumeric}`}
-                                                        </span>
-                                                        {resp.isNormal ? (
-                                                           <span className="text-emerald-500 text-[10px]">✓</span>
-                                                        ) : (
-                                                           <span className="text-rose-500 text-[10px] font-black">✗</span>
-                                                        )}
-                                                     </div>
-                                                  </div>
+                                                  <>
+                                                     {renderedItems.map(({ item, resp }) => {
+                                                        const isOnUse = item.frequency === 'on-use';
+                                                        const freqLabel = isOnUse ? '🔌 ตรวจก่อนใช้' : '📅 ตรวจประจำวัน';
+                                                        const freqColor = isOnUse ? 'text-emerald-700 bg-emerald-50 border-emerald-100' : 'text-indigo-700 bg-indigo-50 border-indigo-100';
+                                                        
+                                                        return (
+                                                           <div key={item.id} className={cn(
+                                                              "p-2.5 rounded-xl border flex items-center justify-between text-xs font-bold bg-white shadow-xs",
+                                                              !resp ? "border-slate-200 bg-slate-100/50 opacity-80" : resp.isNormal ? "border-slate-100" : "border-rose-200 bg-rose-50/30"
+                                                           )}>
+                                                              <div className="min-w-0 pr-2">
+                                                                 <p className="text-slate-900 font-extrabold truncate">{item.name}</p>
+                                                                 <span className={cn("inline-block text-[9px] font-extrabold px-1.5 py-0.5 rounded border mt-1", freqColor)}>
+                                                                   {freqLabel}
+                                                                 </span>
+                                                              </div>
+                                                              <div className="text-right shrink-0 flex items-center gap-1.5 font-mono">
+                                                                 {resp ? (
+                                                                    <>
+                                                                       <span className={resp.isNormal ? "text-emerald-600" : "text-rose-600 font-black"}>
+                                                                          {resp.type === 'boolean' ? (resp.valueBoolean ? 'PASS' : 'FAIL') : `${resp.valueNumeric} ${item.unit || ''}`}
+                                                                       </span>
+                                                                       {resp.isNormal ? (
+                                                                          <span className="text-emerald-500 text-[10px]">✓</span>
+                                                                       ) : (
+                                                                          <span className="text-rose-500 text-[10px] font-black">✗</span>
+                                                                       )}
+                                                                    </>
+                                                                 ) : (
+                                                                    <span className="px-2 py-0.5 rounded bg-slate-100 border border-slate-200 text-slate-400 text-[9px] font-bold">
+                                                                       💤 สแตนบาย (ไม่ได้ตรวจ)
+                                                                    </span>
+                                                                 )}
+                                                              </div>
+                                                           </div>
+                                                        );
+                                                     })}
+
+                                                     {orphanResponses.map((resp, respIdx) => {
+                                                        const finalName = resp.itemName || `พารามิเตอร์เดิมข้อที่ ${respIdx + 1}`;
+                                                        return (
+                                                           <div key={resp.checkItemId} className={cn(
+                                                              "p-2.5 rounded-xl border flex items-center justify-between text-xs font-bold bg-white shadow-xs",
+                                                              resp.isNormal ? "border-slate-100" : "border-rose-200 bg-rose-50/30"
+                                                           )}>
+                                                              <div className="min-w-0 pr-2">
+                                                                 <p className="text-slate-900 font-extrabold truncate">{finalName}</p>
+                                                                 <span className="inline-block text-[9px] font-extrabold px-1.5 py-0.5 rounded border mt-1 text-slate-500 bg-slate-100 border-slate-200">
+                                                                    📜 ประวัติพารามิเตอร์เดิม
+                                                                 </span>
+                                                              </div>
+                                                              <div className="text-right shrink-0 flex items-center gap-1.5 font-mono">
+                                                                 <span className={resp.isNormal ? "text-emerald-600 font-bold" : "text-rose-600 font-black"}>
+                                                                    {resp.type === 'boolean' ? (resp.valueBoolean ? 'PASS' : 'FAIL') : `${resp.valueNumeric}`}
+                                                                 </span>
+                                                                 {resp.isNormal ? (
+                                                                    <span className="text-emerald-500 text-[10px]">✓</span>
+                                                                 ) : (
+                                                                    <span className="text-rose-500 text-[10px] font-black">✗</span>
+                                                                 )}
+                                                              </div>
+                                                           </div>
+                                                        );
+                                                     })}
+                                                  </>
                                                );
-                                            })}
+                                            })()}
                                          </div>
                                       </div>
 
@@ -382,32 +437,73 @@ export default function OocLogs({ selectedDept = 'all' }: { selectedDept?: strin
                                );
                              })
                           ) : (
-                             /* Empty state display listing all uninspected parameters! */
+                             /* Empty state display listing all uninspected parameters classified beautifully! */
                              <div className="p-4 sm:p-6 space-y-6 bg-white rounded-2xl border border-slate-200/60 shadow-xs">
                                 <div className="p-6 bg-amber-500/5 border-2 border-dashed border-amber-300 rounded-2xl flex flex-col items-center justify-center text-center space-y-3">
-                                  <AlertTriangle className="w-10 h-10 text-amber-500 animate-bounce" />
+                                  <AlertTriangle className="w-10 h-10 text-amber-500" />
                                   <h3 className="text-base font-bold text-amber-900">⚠️ เครื่องมือนี้ยังไม่ได้รับการตรวจสอบในวันที่เลือก</h3>
-                                  <p className="text-xs text-amber-700 max-w-sm">เครื่องจักรมีสถานะพร้อมใช้งาน แต่ผู้ปฏิบัติงานในกะการทำงานยังไม่ได้สแกนตรวจเช็กค่าควบคุมในวันนี้</p>
+                                  <p className="text-xs text-amber-700 max-w-sm font-medium">เครื่องจักรมีสถานะพร้อมใช้งาน แต่ผู้ปฏิบัติงานในกะการทำงานยังไม่ได้สแกนตรวจเช็กค่าควบคุมในวันนี้</p>
                                 </div>
 
-                                <div className="space-y-3">
-                                   <p className="text-xs font-black text-slate-400 uppercase tracking-widest">พารามิเตอร์ที่ต้องตรวจสอบทั้งหมด ({selectedEqItems.length} ข้อ)</p>
-                                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                                      {selectedEqItems.length === 0 ? (
-                                         <p className="text-xs text-slate-400 col-span-full italic py-4 text-center">ยังไม่ได้กำหนดข้อคำถามพารามิเตอร์ตรวจสอบสำหรับเครื่องมือนี้</p>
-                                      ) : (
-                                         selectedEqItems.map((item, idx) => (
-                                            <div key={item.id} className="p-3.5 rounded-xl border border-slate-200 bg-slate-50/50 flex justify-between items-center text-xs font-bold shadow-xs">
-                                               <div className="min-w-0 pr-2">
-                                                  <p className="text-slate-800 font-extrabold truncate">ข้อที่ {idx + 1}: {item.name}</p>
-                                                  <p className="text-[10px] text-slate-400 mt-0.5 font-semibold">ประเภท: {item.type === 'boolean' ? 'Pass/Fail' : `วัดค่าตัวเลข (${item.minValue ?? ''} - ${item.maxValue ?? ''} ${item.unit || ''})`}</p>
+                                <div className="space-y-6">
+                                   {/* Group 1: Daily check items */}
+                                   <div className="space-y-3">
+                                      <div className="flex items-center gap-2">
+                                         <span className="w-2.5 h-2.5 rounded-full bg-indigo-500"></span>
+                                         <p className="text-xs font-black text-slate-700 uppercase tracking-widest">
+                                            📅 รายการตรวจประจำวัน (บังคับตรวจทุกวันแม้ไม่มีงาน)
+                                         </p>
+                                      </div>
+                                      
+                                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                         {selectedEqItems.filter(item => !item.frequency || item.frequency === 'daily' || item.frequency === 'per-shift').length === 0 ? (
+                                            <p className="text-xs text-slate-400 col-span-full italic py-3 text-center bg-slate-50 border border-slate-100 rounded-xl">ไม่มีรายการตรวจประจำวันสำหรับเครื่องนี้</p>
+                                         ) : (
+                                            selectedEqItems.filter(item => !item.frequency || item.frequency === 'daily' || item.frequency === 'per-shift').map((item, idx) => (
+                                               <div key={item.id} className="p-3.5 rounded-xl border border-indigo-100 bg-indigo-50/10 flex justify-between items-center text-xs font-bold shadow-xs">
+                                                  <div className="min-w-0 pr-2">
+                                                     <p className="text-slate-800 font-extrabold truncate">{item.name}</p>
+                                                     <p className="text-[10px] text-slate-500 mt-0.5 font-semibold">
+                                                        เกณฑ์ตรวจสอบ: {item.criteriaText || 'ตรวจสอบสเปกปกติ'}
+                                                     </p>
+                                                  </div>
+                                                  <span className="px-2 py-1 rounded bg-amber-500/10 text-amber-700 border border-amber-200 text-[10px] uppercase font-extrabold shrink-0 whitespace-nowrap">
+                                                    ⏳ ค้างตรวจประจำวัน
+                                                  </span>
                                                </div>
-                                               <span className="px-2 py-1 rounded bg-rose-50 text-rose-600 border border-rose-100 text-[10px] uppercase font-extrabold shrink-0 whitespace-nowrap">
-                                                 ❌ ยังไม่ตรวจ
-                                               </span>
-                                            </div>
-                                         ))
-                                      )}
+                                            ))
+                                         )}
+                                      </div>
+                                   </div>
+
+                                   {/* Group 2: On-use check items */}
+                                   <div className="space-y-3">
+                                      <div className="flex items-center gap-2">
+                                         <span className="w-2.5 h-2.5 rounded-full bg-emerald-500"></span>
+                                         <p className="text-xs font-black text-slate-700 uppercase tracking-widest">
+                                            🔌 รายการตรวจก่อนใช้งาน (ตรวจเฉพาะเมื่อเปิดใช้งานเครื่อง / ไม่มีงานไม่ต้องตรวจ)
+                                         </p>
+                                      </div>
+                                      
+                                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                         {selectedEqItems.filter(item => item.frequency === 'on-use').length === 0 ? (
+                                            <p className="text-xs text-slate-400 col-span-full italic py-3 text-center bg-slate-50 border border-slate-100 rounded-xl">ไม่มีรายการตรวจก่อนใช้งานสำหรับเครื่องนี้</p>
+                                         ) : (
+                                            selectedEqItems.filter(item => item.frequency === 'on-use').map((item, idx) => (
+                                               <div key={item.id} className="p-3.5 rounded-xl border border-slate-200 bg-slate-50/50 flex justify-between items-center text-xs font-bold shadow-xs">
+                                                  <div className="min-w-0 pr-2">
+                                                     <p className="text-slate-700 font-extrabold truncate">{item.name}</p>
+                                                     <p className="text-[10px] text-slate-400 mt-0.5 font-semibold">
+                                                        เกณฑ์ตรวจสอบ: {item.criteriaText || 'ตรวจสอบสเปกปกติ'}
+                                                     </p>
+                                                  </div>
+                                                  <span className="px-2 py-1 rounded bg-slate-100 text-slate-500 border border-slate-200 text-[10px] uppercase font-extrabold shrink-0 whitespace-nowrap">
+                                                    🔌 Standby / ตรวจเมื่อใช้
+                                                  </span>
+                                               </div>
+                                            ))
+                                         )}
+                                      </div>
                                    </div>
                                 </div>
                              </div>

@@ -46,6 +46,10 @@ let mockCheckItems: CheckItem[] = getLocalStorage('lab_check_items', [
   { id: 'c3', equipmentId: '1', category: 'ตรวจสอบความพร้อมของเครื่องมือ (ทำก่อนทดสอบ)', name: 'Dia. Orifice', criteriaText: 'วัดด้วย Go ,no-Go', type: 'boolean', expectedBoolean: true, isRequired: true, orderIndex: 3, frequency: 'on-use' },
   { id: 'c4', equipmentId: '1', category: 'ตรวจสอบความพร้อมของเครื่องมือ (ทำก่อนทดสอบ)', name: 'Piston', criteriaText: 'ไม่งอ ไม่มีรอยชำรุด ไม่เบี้ยว', type: 'boolean', expectedBoolean: true, isRequired: true, orderIndex: 4, frequency: 'on-use' },
   { id: 'c5', equipmentId: '1', category: 'ตรวจสอบความพร้อมของเครื่องมือ (ทำก่อนทดสอบ)', name: 'วัด STD P601F', criteriaText: 'บันทึกค่าที่ได้', type: 'numeric', minValue: 9.0, maxValue: 11.0, isRequired: true, orderIndex: 5, frequency: 'on-use' },
+  { id: 'c6', equipmentId: '2', category: 'ตรวจสอบสภาพเครื่อง (ทำทุกวัน)', name: 'System Pressure', criteriaText: '100 - 250 bar', type: 'numeric', minValue: 100, maxValue: 250, unit: 'bar', isRequired: true, orderIndex: 1, frequency: 'daily' },
+  { id: 'c7', equipmentId: '2', category: 'ตรวจสอบสภาพเครื่อง (ทำทุกวัน)', name: 'Mobile Phase Level', criteriaText: 'มีปริมาณเพียงพอ > 100 ml', type: 'boolean', expectedBoolean: true, isRequired: true, orderIndex: 2, frequency: 'daily' },
+  { id: 'c8', equipmentId: '2', category: 'ตรวจสอบความพร้อมของเครื่องมือ (ทำก่อนทดสอบ)', name: 'Column Temperature', criteriaText: '30 - 45 °C', type: 'numeric', minValue: 30, maxValue: 45, unit: '°C', isRequired: true, orderIndex: 3, frequency: 'on-use' },
+  { id: 'c9', equipmentId: '2', category: 'ตรวจสอบความพร้อมของเครื่องมือ (ทำก่อนทดสอบ)', name: 'No Leakage', criteriaText: 'ไม่มีการรั่วซึมตามข้อต่อ', type: 'boolean', expectedBoolean: true, isRequired: true, orderIndex: 4, frequency: 'on-use' },
 ]);
 
 let mockLogs: CheckLog[] = getLocalStorage('lab_logs', [
@@ -78,8 +82,9 @@ export async function fetchEquipments(): Promise<Equipment[]> {
     if (list.length > 0) {
       mockEquipments = list;
       setLocalStorage('lab_equipments', list);
+      return list;
     }
-    return list;
+    return mockEquipments;
   } catch (error) {
     console.warn("Firestore access error, serving fallback data.", error);
     return mockEquipments;
@@ -141,8 +146,9 @@ export async function fetchCheckItems(equipmentId?: string): Promise<CheckItem[]
         mockCheckItems = list;
       }
       setLocalStorage('lab_check_items', mockCheckItems);
+      return list;
     }
-    return equipmentId ? list : list;
+    return equipmentId ? mockCheckItems.filter(i => i.equipmentId === equipmentId) : mockCheckItems;
   } catch (error) {
     console.warn("Firestore access error, serving fallback data.", error);
     return equipmentId ? mockCheckItems.filter(i => i.equipmentId === equipmentId) : mockCheckItems;
@@ -206,8 +212,9 @@ export async function fetchOperators(): Promise<Operator[]> {
     if (list.length > 0) {
       mockOperators = list;
       setLocalStorage('lab_operators', list);
+      return list;
     }
-    return list;
+    return mockOperators;
   } catch (error) {
     console.warn("Firestore access error, serving fallback operators.", error);
     return mockOperators;
@@ -269,8 +276,15 @@ export async function fetchLogs(dateKey: string): Promise<CheckLog[]> {
   try {
     const q = query(collection(db, "logs"), where("dateKey", "==", dateKey));
     const snapshot = await getDocs(q);
-    if (snapshot.empty && dateKey === format(Date.now(), 'yyyy-MM-dd')) return mockLogs.filter(l => l.dateKey === dateKey); // fallback logic
-    return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as CheckLog));
+    const list = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as CheckLog));
+    if (list.length > 0) {
+      // Merge unique logs
+      const otherLogs = mockLogs.filter(l => l.dateKey !== dateKey);
+      mockLogs = [...otherLogs, ...list];
+      setLocalStorage('lab_logs', mockLogs);
+      return list;
+    }
+    return mockLogs.filter(l => l.dateKey === dateKey);
   } catch (error) {
     console.warn("Firestore access error, serving fallback data.", error);
     return mockLogs.filter(l => l.dateKey === dateKey);
@@ -325,10 +339,15 @@ export async function seedDummyData() {
     const snapshot = await getDocs(query(collection(db, "equipments")));
     if (!snapshot.empty) return false; // Already has data
 
-    // This is purely for demonstration to the CEO
+    // Seed first equipment: MI 035
     const eq1Ref = doc(collection(db, "equipments"));
     batch.set(eq1Ref, { name: 'MI 035', code: 'MI-035', location: 'Lab OTR', referenceDocNo: 'PDS-F-1035 Rev.001', status: 'active', createdAt: Date.now() });
 
+    // Seed second equipment: HPLC System
+    const eq2Ref = doc(collection(db, "equipments"));
+    batch.set(eq2Ref, { name: 'HPLC System', code: 'HPLC-001', location: 'Analytical Lab', status: 'active', createdAt: Date.now() });
+
+    // Seed check items for MI 035
     const item1Ref = doc(collection(db, "check_items"));
     batch.set(item1Ref, { equipmentId: eq1Ref.id, category: 'ตรวจสอบสภาพเครื่อง (ทำทุกวัน)', name: 'Temp Standby', criteriaText: '230 °C', type: 'boolean', expectedBoolean: true, isRequired: true, orderIndex: 1, frequency: 'daily' });
 
@@ -343,6 +362,19 @@ export async function seedDummyData() {
 
     const item5Ref = doc(collection(db, "check_items"));
     batch.set(item5Ref, { equipmentId: eq1Ref.id, category: 'ตรวจสอบความพร้อมของเครื่องมือ (ทำก่อนทดสอบ)', name: 'วัด STD P601F', criteriaText: 'บันทึกค่าที่ได้ (ขอบเขต 9.0 - 11.0)', type: 'numeric', minValue: 9.0, maxValue: 11.0, isRequired: true, orderIndex: 5, frequency: 'on-use' });
+
+    // Seed check items for HPLC System
+    const hplc1Ref = doc(collection(db, "check_items"));
+    batch.set(hplc1Ref, { equipmentId: eq2Ref.id, category: 'ตรวจสอบสภาพเครื่อง (ทำทุกวัน)', name: 'System Pressure', criteriaText: '100 - 250 bar', type: 'numeric', minValue: 100, maxValue: 250, unit: 'bar', isRequired: true, orderIndex: 1, frequency: 'daily' });
+
+    const hplc2Ref = doc(collection(db, "check_items"));
+    batch.set(hplc2Ref, { equipmentId: eq2Ref.id, category: 'ตรวจสอบสภาพเครื่อง (ทำทุกวัน)', name: 'Mobile Phase Level', criteriaText: 'มีปริมาณเพียงพอ > 100 ml', type: 'boolean', expectedBoolean: true, isRequired: true, orderIndex: 2, frequency: 'daily' });
+
+    const hplc3Ref = doc(collection(db, "check_items"));
+    batch.set(hplc3Ref, { equipmentId: eq2Ref.id, category: 'ตรวจสอบความพร้อมของเครื่องมือ (ทำก่อนทดสอบ)', name: 'Column Temperature', criteriaText: '30 - 45 °C', type: 'numeric', minValue: 30, maxValue: 45, unit: '°C', isRequired: true, orderIndex: 3, frequency: 'on-use' });
+
+    const hplc4Ref = doc(collection(db, "check_items"));
+    batch.set(hplc4Ref, { equipmentId: eq2Ref.id, category: 'ตรวจสอบความพร้อมของเครื่องมือ (ทำก่อนทดสอบ)', name: 'No Leakage', criteriaText: 'ไม่มีการรั่วซึมตามข้อต่อ', type: 'boolean', expectedBoolean: true, isRequired: true, orderIndex: 4, frequency: 'on-use' });
 
     const op1Ref = doc(collection(db, "operators"));
     batch.set(op1Ref, { name: 'Sarah Connor', employeeId: 'SC-101', isActive: true });

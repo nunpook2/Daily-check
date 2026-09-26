@@ -117,7 +117,7 @@ function App() {
             {/* Network secure health bar */}
             <div className="flex items-center justify-between text-[10px] text-slate-400 font-bold px-1">
                <span className="flex items-center gap-1.5">
-                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
                   ระบบเชื่อมต่อคลาวด์ปกติ
                </span>
                <span className="font-mono text-slate-400">SECURE SSL</span>
@@ -138,7 +138,7 @@ function App() {
         </div>
 
         <div className="flex items-center gap-1 text-[9px] font-bold text-emerald-600 bg-emerald-50 border border-emerald-100 px-2.5 py-0.5 rounded-full">
-          <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
+          <span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
           Online
         </div>
       </header>

@@ -6,7 +6,8 @@ import {
   fetchCheckItems,
   updateCheckLog,
   fetchEquipmentLogs,
-  updateEquipment
+  updateEquipment,
+  saveCheckLog
 } from '../lib/db';
 import { format } from 'date-fns';
 import { 
@@ -26,7 +27,11 @@ import {
   SlidersHorizontal,
   ChevronRight,
   Info,
-  Calendar
+  Calendar,
+  Sun,
+  Moon,
+  User,
+  Power
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Equipment, CheckLog, CheckItem } from '../types';
@@ -64,6 +69,116 @@ export default function Dashboard({ selectedDept = 'all' }: { selectedDept?: str
 
   const [dashboardDate, setDashboardDate] = useState<string>(format(new Date(), 'yyyy-MM-dd'));
   const [latestLogsByEq, setLatestLogsByEq] = useState<Record<string, CheckLog>>({});
+
+  const getShiftHistoryItems = () => {
+    if (!historyEq) return [];
+    
+    const eqItems = checkItems.filter(item => item.equipmentId === historyEq.id);
+    const timelineItems = [];
+
+    const now = new Date();
+    
+    // Generate past 10 days of shifts
+    for (let i = 0; i < 10; i++) {
+       const d = new Date();
+       d.setDate(now.getDate() - i);
+       const dateStr = format(d, 'yyyy-MM-dd');
+       const dateDisplay = format(d, 'dd MMM yyyy');
+
+       const isToday = i === 0;
+       const hours = now.getHours();
+
+       // NIGHT shift (20:00 - 08:00)
+       const nightShiftStarted = !isToday || hours >= 20;
+       if (nightShiftStarted) {
+          const log = historyLogs.find(l => l.dateKey === dateStr && l.shift === 'NIGHT');
+          let isIdle = false;
+          let isIncomplete = false;
+          let isPassed = false;
+          let operatorName = 'ไม่ได้ตรวจสอบ / ค้างตรวจ';
+
+          if (log) {
+             isIdle = log.notes?.includes('ไม่ได้ใช้งาน') || log.notes?.includes('ติดทดสอบ');
+             isPassed = log.status === 'passed';
+             operatorName = log.operatorName || 'ไม่ระบุ';
+             
+             if (!isIdle) {
+                const matchedIds = new Set();
+                eqItems.forEach(item => {
+                   const resp = log.responses.find(r => r.checkItemId === item.id || (r.itemName && r.itemName.toLowerCase() === item.name.toLowerCase()));
+                   if (resp) {
+                      matchedIds.add(item.id);
+                   }
+                });
+                const logPendingCount = Math.max(0, eqItems.length - matchedIds.size);
+                isIncomplete = logPendingCount > 0;
+             }
+          }
+
+          const nightTime = new Date(d);
+          nightTime.setHours(20, 0, 0, 0);
+
+          timelineItems.push({
+             id: `${dateStr}-NIGHT`,
+             dateKey: dateStr,
+             dateDisplay,
+             shift: 'NIGHT',
+             log,
+             isIdle,
+             isIncomplete,
+             isPassed,
+             operatorName,
+             timestamp: nightTime.getTime()
+          });
+       }
+
+       // DAY shift (08:00 - 20:00)
+       const dayShiftStarted = !isToday || hours >= 8;
+       if (dayShiftStarted) {
+          const log = historyLogs.find(l => l.dateKey === dateStr && l.shift === 'DAY');
+          let isIdle = false;
+          let isIncomplete = false;
+          let isPassed = false;
+          let operatorName = 'ไม่ได้ตรวจสอบ / ค้างตรวจ';
+
+          if (log) {
+             isIdle = log.notes?.includes('ไม่ได้ใช้งาน') || log.notes?.includes('ติดทดสอบ');
+             isPassed = log.status === 'passed';
+             operatorName = log.operatorName || 'ไม่ระบุ';
+             
+             if (!isIdle) {
+                const matchedIds = new Set();
+                eqItems.forEach(item => {
+                   const resp = log.responses.find(r => r.checkItemId === item.id || (r.itemName && r.itemName.toLowerCase() === item.name.toLowerCase()));
+                   if (resp) {
+                      matchedIds.add(item.id);
+                   }
+                });
+                const logPendingCount = Math.max(0, eqItems.length - matchedIds.size);
+                isIncomplete = logPendingCount > 0;
+             }
+          }
+
+          const dayTime = new Date(d);
+          dayTime.setHours(8, 0, 0, 0);
+
+          timelineItems.push({
+             id: `${dateStr}-DAY`,
+             dateKey: dateStr,
+             dateDisplay,
+             shift: 'DAY',
+             log,
+             isIdle,
+             isIncomplete,
+             isPassed,
+             operatorName,
+             timestamp: dayTime.getTime()
+          });
+       }
+    }
+
+    return timelineItems.sort((a, b) => b.timestamp - a.timestamp);
+  };
 
   useEffect(() => {
     loadData(dashboardDate);
@@ -216,6 +331,44 @@ export default function Dashboard({ selectedDept = 'all' }: { selectedDept?: str
     setHistoryEq(updatedEq);
   };
 
+  const handleQuickSetStandby = async (e: React.MouseEvent, eqId: string, shift: 'DAY' | 'NIGHT') => {
+    e.stopPropagation(); // prevent modal opening!
+    const confirmSet = window.confirm(`คุณต้องการเปลี่ยนสถานะของเครื่องนี้เป็น "ไม่ได้ใช้งาน / เครื่องติดทดสอบ" ในกะ${shift === 'DAY' ? 'กลางวัน (เช้า)' : 'กลางคืน (ดึก)'} หรือไม่? (ระบบจะออกใบบันทึกสแตนบายเพื่อให้ผ่านการตรวจโดยสมบูรณ์)`);
+    if (!confirmSet) return;
+    
+    // Create passing responses for all check items for this equipment
+    const eqItems = checkItems.filter(item => item.equipmentId === eqId);
+    const responses = eqItems.map(item => ({
+      checkItemId: item.id!,
+      type: item.type,
+      itemName: item.name,
+      valueBoolean: item.type === 'boolean' ? true : undefined,
+      valueNumeric: item.type === 'numeric' ? (item.minValue ?? 0) : undefined,
+      isNormal: true
+    }));
+
+    const newLog = {
+      equipmentId: eqId,
+      timestamp: Date.now(),
+      dateKey: dashboardDate,
+      shift: shift,
+      checkCycle: 'all',
+      operatorId: 'sc-101',
+      operatorName: 'Sarah Connor (แอดมิน Bypass)',
+      status: 'passed' as const,
+      notes: 'ไม่ได้ใช้งาน / เครื่องติดทดสอบ (Standby / Testing)',
+      responses: responses
+    };
+
+    try {
+      await saveCheckLog(newLog);
+      alert(`บันทึกสถานะ "ไม่ได้ใช้งาน / เครื่องติดทดสอบ" ของกะ${shift === 'DAY' ? 'กลางวัน' : 'กลางคืน'} เรียบร้อยแล้ว`);
+      loadData(dashboardDate);
+    } catch (err) {
+      alert("ไม่สามารถบันทึกสถานะได้ กรุณาลองใหม่อีกครั้ง");
+    }
+  };
+
   if (loading) {
     return (
       <div className="flex flex-col items-center justify-center min-h-[400px] text-slate-400">
@@ -228,33 +381,20 @@ export default function Dashboard({ selectedDept = 'all' }: { selectedDept?: str
   const activeEquipments = equipments.filter(e => e.status === 'active');
   const maintenanceEquipments = equipments.filter(e => e.status === 'maintenance');
   
-  // Equipment needs check if it has ANY check item with daily or per-shift frequency
-  const dailyOrShiftEquipments = activeEquipments.filter(e => {
-     const eqItems = checkItems.filter(item => item.equipmentId === e.id);
-     return eqItems.some(item => item.frequency === 'daily' || item.frequency === 'per-shift');
-  });
-  
+  // Calculate compliance statistics for shift
   const checkedEqIds = new Set(logs.map(l => l.equipmentId));
-  const pendingCount = dailyOrShiftEquipments.filter(e => !checkedEqIds.has(e.id)).length;
-  const checkedCount = dailyOrShiftEquipments.length - pendingCount;
-  
-  const currentOocCount = activeEquipments.filter(eq => {
-      const latestLog = latestLogsByEq[eq.id!];
-      return latestLog && (latestLog.status === 'needs_attention' || latestLog.status === 'failed');
-  }).length;
-
-  const complianceRate = dailyOrShiftEquipments.length === 0 ? 100 : Math.round((checkedCount / dailyOrShiftEquipments.length) * 100);
+  const pendingCount = activeEquipments.filter(e => !checkedEqIds.has(e.id)).length;
+  const checkedCount = activeEquipments.length - pendingCount;
+  const complianceRate = activeEquipments.length === 0 ? 100 : Math.round((checkedCount / activeEquipments.length) * 100);
 
   // Filter Equipment for Tracker Table/Cards
   const filteredEquipments = equipments.filter(eq => {
-    // Search matching
     const matchesSearch = eq.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
                           eq.code.toLowerCase().includes(searchTerm.toLowerCase()) ||
                           (eq.location && eq.location.toLowerCase().includes(searchTerm.toLowerCase()));
     
     if (!matchesSearch) return false;
 
-    // Status matching
     const eqLogsToday = logs.filter(l => l.equipmentId === eq.id);
     const hasLog = eqLogsToday.length > 0;
     const isFailed = eqLogsToday.some(l => l.status === 'failed' || l.status === 'needs_attention');
@@ -275,14 +415,14 @@ export default function Dashboard({ selectedDept = 'all' }: { selectedDept?: str
       <div className="flex flex-col lg:flex-row lg:justify-between lg:items-center gap-6 pb-6 border-b border-slate-200/60">
         <div>
           <div className="flex items-center gap-2 text-indigo-600 font-mono text-xs font-bold tracking-widest uppercase mb-1">
-            <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
-            Live Monitoring System
+            <span className="w-2 h-2 rounded-full bg-emerald-500"></span>
+            Shift monitoring center
           </div>
           <h1 className="text-3xl sm:text-4xl font-black tracking-tight text-slate-900 font-display">
-            ระบบแผงควบคุมกลาง <span className="text-transparent bg-clip-text bg-gradient-to-r from-indigo-600 to-violet-600">LabControl</span>
+            ระบบแผงควบคุมกลาง <span className="text-indigo-600">APEX INSPEC</span>
           </h1>
           <p className="text-slate-500 mt-1 text-sm sm:text-base font-medium">
-            ข้อมูลความพร้อมเครื่องจักร อัตราการตรวจสอบ และการจัดการความผิดปกติแบบเรียลไทม์
+            สถิติตรวจเช็คแยกตามกะทำงานแบบเรียลไทม์ และระบบตรวจสอบสถานะเครื่องค้างใช้งาน
           </p>
         </div>
 
@@ -314,7 +454,7 @@ export default function Dashboard({ selectedDept = 'all' }: { selectedDept?: str
           <button 
             onClick={handleSeed}
             disabled={seeding}
-            className="px-4 py-3 bg-slate-950 text-white font-bold rounded-2xl text-xs hover:bg-slate-800 transition-all flex items-center gap-2 shadow-sm shrink-0"
+            className="px-4 py-3 bg-slate-950 text-white font-bold rounded-2xl text-xs hover:bg-slate-800 transition-all flex items-center gap-2 shadow-sm shrink-0 cursor-pointer"
           >
             <RefreshCcw className={cn("w-3.5 h-3.5", seeding && "animate-spin")} />
             {seeding ? "กำลังอัปเดต..." : "อัปเดตข้อมูลสาธิต"}
@@ -322,38 +462,38 @@ export default function Dashboard({ selectedDept = 'all' }: { selectedDept?: str
         </div>
       </div>
 
-      {/* Main Smart Metrics */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-6">
+      {/* Corporate Executive Analytics Dashboard Deck */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-6">
         <MetricCard 
-          title="อัตราการตรวจเช็กสะสม" 
-          engTitle="Inspection Rate"
+          title="อัตราตรวจความสอดคล้อง" 
+          engTitle="Inspected Compliance"
           value={`${complianceRate}%`} 
-          subtitle={`ตรวจแล้ว ${checkedCount} จากทั้งหมด ${dailyOrShiftEquipments.length} เครื่อง`}
-          icon={<Activity className="w-6 h-6 text-emerald-600" />}
-          trend={complianceRate === 100 ? 'positive' : 'neutral'}
+          subtitle="เป้าหมายรายวัน 100%"
+          icon={<Activity className="w-6 h-6 text-indigo-600" />}
+          trend={complianceRate >= 90 ? 'up' : 'down'}
         />
         <MetricCard 
-          title="รอดำเนินการตรวจ" 
-          engTitle="Pending Checks"
+          title="เครื่องมือตรวจแล้ววันนี้" 
+          engTitle="Machines Inspected"
+          value={checkedCount} 
+          subtitle={`จากเครื่องจักรที่เปิดใช้ทั้งหมด ${activeEquipments.length} เครื่อง`}
+          icon={<CheckCircle className="w-6 h-6 text-emerald-500" />}
+          trend="neutral"
+        />
+        <MetricCard 
+          title="เครื่องค้างส่งบันทึกตรวจ" 
+          engTitle="Inspection Pending"
           value={pendingCount} 
-          subtitle="เครื่องจักรที่ยังไม่สแกนยืนยันวันนี้"
-          icon={<Clock className="w-6 h-6 text-amber-500" />}
-          trend={pendingCount > 0 ? 'warning' : 'positive'}
+          subtitle="ควรได้รับบันทึกสแตนบายหากไม่ทำงาน"
+          icon={<AlertTriangle className={cn("w-6 h-6", pendingCount > 0 ? "text-amber-500" : "text-slate-400")} />}
+          trend={pendingCount > 0 ? 'down' : 'up'}
         />
         <MetricCard 
-          title="ความผิดปกติ / หลุดสเปก" 
-          engTitle="Active Alerts (OOC)"
-          value={currentOocCount} 
-          subtitle={currentOocCount > 0 ? "ต้องการการบำรุงรักษาด่วน" : "เครื่องจักรทุกเครื่องทำงานปกติ"}
-          icon={<AlertTriangle className={cn("w-6 h-6", currentOocCount > 0 ? "text-rose-500 animate-bounce" : "text-slate-400")} />}
-          trend={currentOocCount > 0 ? 'negative' : 'positive'}
-        />
-        <MetricCard 
-          title="กำลังปิดซ่อมบำรุง" 
-          engTitle="Maintenance Mode"
+          title="เครื่องที่ชำรุดเสียหาย" 
+          engTitle="Breakdown Machines"
           value={maintenanceEquipments.length} 
-          subtitle="ล็อคสถานะชั่วคราว ห้ามสแกนตรวจ"
-          icon={<Wrench className={cn("w-6 h-6", maintenanceEquipments.length > 0 ? "text-indigo-600 animate-pulse" : "text-slate-400")} />}
+          subtitle="ปิดล็อกหน้าสแกนตรวจเด็ดขาด"
+          icon={<Wrench className={cn("w-6 h-6", maintenanceEquipments.length > 0 ? "text-red-500" : "text-slate-400")} />}
           trend={maintenanceEquipments.length > 0 ? 'warning' : 'neutral'}
         />
       </div>
@@ -365,8 +505,8 @@ export default function Dashboard({ selectedDept = 'all' }: { selectedDept?: str
          {/* Filter controls */}
          <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-6 pb-6 border-b border-slate-100 relative z-10">
            <div>
-             <h2 className="text-xl font-bold text-slate-900 font-display">ศูนย์ติดตามสถานะเครื่องจักรรายวัน</h2>
-             <p className="text-xs text-slate-500 mt-1">คลิกที่การ์ดเพื่อดูข้อมูลประวัติ สถิติการตรวจเช็ก หรือส่งซ่อมบำรุง</p>
+             <h2 className="text-xl font-bold text-slate-900 font-display">ศูนย์ติดตามสถานะเครื่องจักรรายวัน (Shift Monitor)</h2>
+             <p className="text-xs text-slate-500 mt-1">มอนิเตอร์ความพร้อมของกะกลางวันและกลางคืนได้พร้อมกันในหน้าเดียว</p>
            </div>
            
            <div className="flex flex-wrap items-center gap-3 w-full md:w-auto">
@@ -378,7 +518,7 @@ export default function Dashboard({ selectedDept = 'all' }: { selectedDept?: str
                  placeholder="ค้นหาชื่อ, รหัส, สถานที่..." 
                  value={searchTerm}
                  onChange={e => setSearchTerm(e.target.value)}
-                 className="w-full pl-10 pr-4 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:bg-white transition-all placeholder:text-slate-400 font-semibold"
+                 className="w-full pl-10 pr-4 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:bg-white transition-all placeholder:text-slate-400 font-semibold text-slate-800"
                />
                {searchTerm && (
                  <button onClick={() => setSearchTerm('')} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600">
@@ -400,28 +540,11 @@ export default function Dashboard({ selectedDept = 'all' }: { selectedDept?: str
 
          {/* Grid displaying the smart cards */}
          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 relative z-10">
-           {filteredEquipments.map(eq => {
-              const eqLogsToday = logs.filter(l => l.equipmentId === eq.id);
-              const eqItems = checkItems.filter(item => item.equipmentId === eq.id);
-              
-              const hasDailyItems = eqItems.length === 0 || eqItems.some(i => i.frequency === 'daily' || !i.frequency || i.frequency === 'per-shift');
-              const hasOnUseItems = eqItems.some(i => i.frequency === 'on-use');
-              
-              let dailyStatus = 'not_checked';
-              let onUseStatus = 'not_checked';
-              
-              if (hasDailyItems) {
-                const dailyLog = eqLogsToday.find(l => l.checkCycle === 'daily' || !l.checkCycle || l.checkCycle === 'all' || l.checkCycle === 'per-shift');
-                if (dailyLog) dailyStatus = dailyLog.status;
-              }
-              if (hasOnUseItems) {
-                const onUseLog = eqLogsToday.find(l => l.checkCycle === 'on-use' || !l.checkCycle || l.checkCycle === 'all');
-                if (onUseLog) onUseStatus = onUseLog.status;
-              }
-              
-              const isMaint = eq.status === 'maintenance';
-              const isChecked = eqLogsToday.length > 0;
-              const hasFailed = eqLogsToday.some(l => l.status === 'failed' || l.status === 'needs_attention');
+            {filteredEquipments.map(eq => {
+               const eqLogsToday = logs.filter(l => l.equipmentId === eq.id);
+               const isMaint = eq.status === 'maintenance';
+               const isChecked = eqLogsToday.length > 0;
+               const hasFailed = eqLogsToday.some(l => l.status === 'failed' || l.status === 'needs_attention');
 
                return (
                 <div 
@@ -439,486 +562,582 @@ export default function Dashboard({ selectedDept = 'all' }: { selectedDept?: str
                    )}
                 >
                    <div>
-                     {/* Card Header Info */}
-                     <div className="flex items-center justify-between mb-4">
-                        <div className="flex items-center gap-3">
-                           <div className={cn(
-                             "w-10 h-10 rounded-xl border flex items-center justify-center transition-all group-hover:scale-110",
-                             isMaint 
-                              ? "bg-red-50 border-red-200 text-red-600" 
-                              : hasFailed
-                                ? "bg-rose-50 border-rose-200 text-rose-600"
-                                : isChecked
-                                  ? "bg-emerald-50 border-emerald-200 text-emerald-700"
-                                  : "bg-amber-50 border-amber-200 text-amber-700"
-                           )}>
-                              {isMaint ? (
-                                <Wrench className="w-5 h-5 text-red-600" />
-                              ) : hasFailed ? (
-                                <AlertTriangle className="w-5 h-5 text-rose-600 animate-pulse" />
-                              ) : isChecked ? (
-                                <CheckCircle className="w-5 h-5 text-emerald-600" />
-                              ) : (
-                                <Clock className="w-5 h-5 text-amber-500 animate-pulse" />
-                              )}
-                           </div>
-                           <div>
-                             <h3 className="font-bold text-slate-900 text-sm group-hover:text-indigo-900 transition-colors" title={eq.name}>
-                               {eq.name}
-                             </h3>
-                             {/* Clean Unboxed Metadata (Zero Pill Style) */}
-                             <div className="flex items-center gap-1.5 text-[11px] text-slate-400 mt-0.5">
-                               <span>{eq.code}</span>
-                               <span aria-hidden="true">·</span>
-                               <span className="truncate max-w-[100px]">{(eq.location || 'คลังวิจัย').replace('น้อง', 'ห้อง')}</span>
-                             </div>
-                           </div>
-                        </div>
-                     </div>
+                      {/* Card Header Info */}
+                      <div className="flex items-center justify-between mb-4">
+                         <div className="flex items-center gap-3">
+                            <div className={cn(
+                              "w-10 h-10 rounded-xl border flex items-center justify-center transition-all group-hover:scale-110",
+                              isMaint 
+                               ? "bg-red-50 border-red-200 text-red-600" 
+                               : hasFailed
+                                 ? "bg-rose-50 border-rose-200 text-rose-600"
+                                 : isChecked
+                                   ? "bg-emerald-50 border-emerald-200 text-emerald-700"
+                                   : "bg-amber-50 border-amber-200 text-amber-700"
+                            )}>
+                               {isMaint ? (
+                                 <Wrench className="w-5 h-5 text-red-600" />
+                               ) : hasFailed ? (
+                                 <AlertTriangle className="w-5 h-5 text-rose-600" />
+                               ) : isChecked ? (
+                                 <CheckCircle className="w-5 h-5 text-emerald-600" />
+                               ) : (
+                                 <Clock className="w-5 h-5 text-amber-500" />
+                               )}
+                            </div>
+                            <div>
+                              <h3 className="font-bold text-slate-900 text-sm group-hover:text-indigo-900 transition-colors" title={eq.name}>
+                                {eq.name}
+                              </h3>
+                              {/* Clean Unboxed Metadata (Zero Pill Style) */}
+                              <div className="flex items-center gap-1.5 text-[11px] text-slate-400 mt-0.5">
+                                <span>{eq.code}</span>
+                                <span aria-hidden="true">·</span>
+                                <span className="truncate max-w-[100px]">{(eq.location || 'คลังวิจัย').replace('น้อง', 'ห้อง')}</span>
+                              </div>
+                            </div>
+                         </div>
+                      </div>
 
-                     {/* Specification details / Reference */}
-                     {eq.referenceDocNo && (
-                       <p className="text-[10px] text-slate-400 font-mono mt-1 mb-4 truncate">
-                         Ref Doc: {eq.referenceDocNo}
-                       </p>
-                     )}
+                      {/* Specification details / Reference */}
+                      {eq.referenceDocNo && (
+                        <p className="text-[10px] text-slate-400 font-mono mt-1 mb-4 truncate">
+                          Ref Doc: {eq.referenceDocNo}
+                        </p>
+                      )}
                    </div>
                    
-                   {/* Visual Status Pills (Only Interactive / Informational, Beautiful Segmented Look) */}
-                   <div className="mt-4 pt-3 border-t border-slate-100 flex flex-col gap-2">
+                   {/* Dual Shift Monitoring - Day Shift & Night Shift */}
+                   <div className="mt-4 pt-3 border-t border-slate-100 flex flex-col gap-2.5">
                       {isMaint ? (
-                        <div className="py-2.5 rounded-xl text-[11px] font-extrabold uppercase text-center bg-gradient-to-r from-red-600 to-red-500 text-white shadow-md flex items-center justify-center gap-1.5 animate-pulse">
+                        <div className="py-2.5 rounded-xl text-[11px] font-extrabold uppercase text-center bg-gradient-to-r from-red-600 to-red-500 text-white shadow-md flex items-center justify-center gap-1.5">
                            <Wrench className="w-3.5 h-3.5" />
                            ปิดเพื่อซ่อมบำรุง (Break Down)
                         </div>
                       ) : (
-                        <div className="flex items-center gap-2">
-                          {hasDailyItems && (
-                             <div className={cn("px-3 py-2 rounded-xl border text-[10px] font-bold text-center flex-1 flex flex-col items-center justify-center shadow-sm",
-                                dailyStatus === 'passed' ? "bg-emerald-500/10 border-emerald-300 text-emerald-800" :
-                                (dailyStatus === 'failed' || dailyStatus === 'needs_attention') ? "bg-rose-500/10 border-rose-300 text-rose-800" :
-                                "bg-amber-500/10 border-amber-300 text-amber-800 animate-pulse"
-                             )}>
-                                <span className="opacity-60 text-[9px] uppercase tracking-wider mb-0.5">ประจำวัน</span>
-                                <span className="font-extrabold">
-                                  {dailyStatus === 'passed' ? '✓ ปกติ' : 
-                                   (dailyStatus === 'failed' || dailyStatus === 'needs_attention') ? '✗ หลุดสเปก' : 
-                                   'รอการตรวจ'}
-                                </span>
-                             </div>
-                          )}
-                          
-                          {hasOnUseItems && (
-                             <div className={cn("px-3 py-2 rounded-xl border text-[10px] font-bold text-center flex-1 flex flex-col items-center justify-center shadow-sm",
-                                onUseStatus === 'passed' ? "bg-emerald-500/10 border-emerald-300 text-emerald-800" :
-                                (onUseStatus === 'failed' || onUseStatus === 'needs_attention') ? "bg-rose-500/10 border-rose-300 text-rose-800" :
-                                "bg-slate-50 border-slate-200 text-slate-400"
-                             )}>
-                                <span className="opacity-60 text-[9px] uppercase tracking-wider mb-0.5">ระหว่างใช้</span>
-                                <span className="font-extrabold">
-                                  {onUseStatus === 'passed' ? '✓ ผ่าน' : 
-                                   (onUseStatus === 'failed' || onUseStatus === 'needs_attention') ? '✗ ผิดปกติ' : 
-                                   'Standby'}
-                                </span>
-                             </div>
-                          )}
+                        <div className="space-y-2 w-full">
+                           {/* DAY SHIFT MONITOR ZONE */}
+                           <div className="flex items-center justify-between p-2 rounded-xl bg-slate-50 border border-slate-200/60 text-xs">
+                              <span className="font-black text-slate-700 flex items-center gap-1">
+                                 🌞 กะกลางวัน (เช้า):
+                              </span>
+                              
+                              {(() => {
+                                 const dayLog = eqLogsToday.find(l => l.shift === 'DAY');
+                                 if (dayLog) {
+                                    const isIdle = dayLog.notes?.includes('ไม่ได้ใช้งาน') || dayLog.notes?.includes('ติดทดสอบ');
+                                    if (isIdle) {
+                                       return (
+                                          <span className="px-2 py-1 rounded bg-sky-50 text-sky-700 border border-sky-200 font-black text-[10px] shadow-xs">
+                                             💤 ไม่ใช้งาน / ติดทดสอบ
+                                          </span>
+                                       );
+                                    }
+                                    return dayLog.status === 'passed' ? (
+                                       <span className="px-2 py-1 rounded bg-emerald-50 text-emerald-700 border border-emerald-200 font-black text-[10px] shadow-xs truncate max-w-[120px]" title={`ผู้ตรวจ: ${dayLog.operatorName}`}>
+                                          ✅ ตรวจผ่าน ({dayLog.operatorName.split(' ')[0]})
+                                       </span>
+                                    ) : (
+                                       <span className="px-2 py-1 rounded bg-rose-50 text-rose-700 border border-rose-200 font-black text-[10px] shadow-xs">
+                                          ❌ พบปัญหาหน้างาน
+                                        </span>
+                                     );
+                                  }
+                                  return (
+                                     <button 
+                                        onClick={(e) => handleQuickSetStandby(e, eq.id!, 'DAY')}
+                                        className="px-2 py-1 rounded bg-amber-500 hover:bg-amber-600 text-white font-black text-[10px] border border-amber-600 shadow-sm transition-colors cursor-pointer"
+                                        title="คลิกเพื่อบันทึกว่าเครื่องนี้ไม่ได้ใช้งาน หรือติดทำการทดสอบอยู่"
+                                     >
+                                        ⏳ ค้างตรวจ (บิดสแตนบาย 💤)
+                                     </button>
+                                  );
+                               })()}
+                           </div>
+
+                           {/* NIGHT SHIFT MONITOR ZONE */}
+                           <div className="flex items-center justify-between p-2 rounded-xl bg-slate-50 border border-slate-200/60 text-xs">
+                              <span className="font-black text-slate-700 flex items-center gap-1">
+                                 🌙 กะกลางคืน (ดึก):
+                              </span>
+                              
+                              {(() => {
+                                 const nightLog = eqLogsToday.find(l => l.shift === 'NIGHT');
+                                 if (nightLog) {
+                                    const isIdle = nightLog.notes?.includes('ไม่ได้ใช้งาน') || nightLog.notes?.includes('ติดทดสอบ');
+                                    if (isIdle) {
+                                       return (
+                                          <span className="px-2 py-1 rounded bg-sky-50 text-sky-700 border border-sky-200 font-black text-[10px] shadow-xs">
+                                             💤 ไม่ใช้งาน / ติดทดสอบ
+                                          </span>
+                                       );
+                                    }
+                                    return nightLog.status === 'passed' ? (
+                                       <span className="px-2 py-1 rounded bg-emerald-50 text-emerald-700 border border-emerald-200 font-black text-[10px] shadow-xs truncate max-w-[120px]" title={`ผู้ตรวจ: ${nightLog.operatorName}`}>
+                                          ✅ ตรวจผ่าน ({nightLog.operatorName.split(' ')[0]})
+                                       </span>
+                                    ) : (
+                                       <span className="px-2 py-1 rounded bg-rose-50 text-rose-700 border border-rose-200 font-black text-[10px] shadow-xs">
+                                          ❌ พบปัญหาหน้างาน
+                                        </span>
+                                     );
+                                  }
+                                  return (
+                                     <button 
+                                        onClick={(e) => handleQuickSetStandby(e, eq.id!, 'NIGHT')}
+                                        className="px-2 py-1 rounded bg-amber-500 hover:bg-amber-600 text-white font-black text-[10px] border border-amber-600 shadow-sm transition-colors cursor-pointer"
+                                        title="คลิกเพื่อบันทึกว่าเครื่องนี้ไม่ได้ใช้งาน หรือติดทำการทดสอบอยู่"
+                                     >
+                                        ⏳ ค้างตรวจ (บิดสแตนบาย 💤)
+                                     </button>
+                                  );
+                               })()}
+                           </div>
                         </div>
                       )}
                    </div>
                 </div>
-              );
-           })}
-           
-           {filteredEquipments.length === 0 && (
-              <div className="col-span-full p-12 text-center text-slate-500 flex flex-col items-center border-2 border-dashed border-slate-200 rounded-3xl bg-slate-50">
-                <p className="mb-4 text-base font-bold text-slate-600">ไม่พบข้อมูลเครื่องจักรตามตัวกรองนี้</p>
-                <button 
-                 onClick={() => { setSearchTerm(''); setStatusFilter('all'); }}
-                 className="px-4 py-2 bg-indigo-600 text-white rounded-xl text-xs font-bold hover:bg-indigo-700 transition-colors"
-                >
-                  ล้างตัวกรองทั้งหมด
-                </button>
-              </div>
-           )}
+               );
+            })}
+            
+            {filteredEquipments.length === 0 && (
+               <div className="col-span-full p-12 text-center text-slate-500 flex flex-col items-center border-2 border-dashed border-slate-200 rounded-3xl bg-slate-50">
+                 <p className="mb-4 text-base font-bold text-slate-600">ไม่พบข้อมูลเครื่องจักรตามตัวกรองนี้</p>
+                 <button 
+                  onClick={() => { setSearchTerm(''); setStatusFilter('all'); }}
+                  className="px-4 py-2 bg-indigo-600 text-white rounded-xl text-xs font-bold hover:bg-indigo-700 transition-colors"
+                 >
+                   ล้างตัวกรองทั้งหมด
+                 </button>
+               </div>
+            )}
          </div>
       </div>
 
       {/* Equipment History & Maintenance Modal */}
       <AnimatePresence>
-         {historyEq && !selectedLog && (
+        {historyEq && (
+          <motion.div 
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/40 backdrop-blur-sm"
+          >
             <motion.div 
-               initial={{ opacity: 0 }}
-               animate={{ opacity: 1 }}
-               exit={{ opacity: 0 }}
-               className="fixed inset-0 z-40 flex items-center justify-center p-4 bg-slate-950/40 backdrop-blur-sm"
+              initial={{ opacity: 0, scale: 0.95, y: 15 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 15 }}
+              className="bg-white rounded-3xl shadow-2xl w-full max-w-4xl overflow-hidden max-h-[90vh] flex flex-col border border-slate-100"
             >
-               <motion.div 
-                  initial={{ opacity: 0, scale: 0.95, y: 10 }}
-                  animate={{ opacity: 1, scale: 1, y: 0 }}
-                  exit={{ opacity: 0, scale: 0.95, y: 10 }}
-                  className="bg-white rounded-3xl shadow-2xl w-full max-w-2xl overflow-hidden max-h-[90vh] flex flex-col border border-slate-100"
-               >
-                  <div className="px-6 py-5 border-b border-slate-100 flex justify-between items-center bg-slate-50">
-                     <div>
-                        <h2 className="text-xl font-bold text-slate-900 tracking-tight flex items-center gap-2">
-                          <History className="w-5 h-5 text-indigo-500" />
-                          ข้อมูลเครื่องจักรและประวัติย้อนหลัง
-                        </h2>
-                        {/* Unboxed breadcrumb metadata */}
-                        <div className="flex items-center gap-1.5 text-xs text-slate-500 mt-1">
-                          <span>{historyEq.name}</span>
-                          <span aria-hidden="true">·</span>
-                          <span className="font-mono text-indigo-600 font-bold">{historyEq.code}</span>
-                          <span aria-hidden="true">·</span>
-                          <span>สถานที่: {(historyEq.location || 'Laboratory').replace('น้อง', 'ห้อง')}</span>
-                        </div>
-                     </div>
-                     <button onClick={() => { setHistoryDateFilter(''); setHistoryEq(null); }} className="p-2 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-full transition-colors">
-                        <X className="w-5 h-5" />
-                     </button>
-                  </div>
-                  
-                  <div className="overflow-y-auto flex-1 p-6 space-y-6">
-                     {/* Asset Maintenance Banner / Panel */}
-                     <div className="border border-slate-200/60 rounded-2xl overflow-hidden bg-slate-50 shadow-sm">
-                       <div className="px-4 py-3 bg-slate-100 flex justify-between items-center border-b border-slate-200/50">
-                         <h4 className="text-xs font-bold text-slate-700 tracking-wider uppercase flex items-center gap-1.5">
-                           <Wrench className="w-3.5 h-3.5 text-indigo-600" />
-                           สถานะการส่งซ่อมบำรุง (Maintenance Status)
-                         </h4>
-                         <span className={cn(
-                           "text-[10px] font-extrabold px-2.5 py-1 rounded-lg uppercase tracking-wider",
-                           historyEq.status === 'maintenance' ? "bg-amber-500 text-white" : "bg-emerald-500 text-white"
-                         )}>
-                           {historyEq.status === 'maintenance' ? 'ปิดปรับปรุง' : 'พร้อมใช้งาน'}
-                         </span>
-                       </div>
+              {/* Modal header with active details */}
+              <div className="px-6 py-5 border-b border-slate-100 bg-slate-50/80 flex justify-between items-center shrink-0">
+                 <div>
+                    <div className="flex items-center gap-2">
+                      <h2 className="text-xl font-bold text-slate-900 tracking-tight">{historyEq.name}</h2>
+                      <span className={cn("text-xs font-extrabold px-2.5 py-0.5 rounded-full border", 
+                        historyEq.status === 'active' ? "bg-emerald-50 text-emerald-700 border-emerald-200" : "bg-red-50 text-red-700 border-red-200"
+                      )}>
+                        {historyEq.status === 'active' ? 'กำลังเปิดใช้งาน' : 'ปิดซ่อมบำรุง'}
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-2 text-xs text-slate-500 font-mono mt-1 font-bold">
+                      <span>รหัสบาร์โค้ด: {historyEq.code}</span>
+                      <span aria-hidden="true">·</span>
+                      <span>สถานที่: {(historyEq.location || 'Laboratory').replace('น้อง', 'ห้อง')}</span>
+                    </div>
+                 </div>
+                 <button onClick={() => { setHistoryDateFilter(''); setHistoryEq(null); }} className="p-2 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-full transition-colors">
+                   <X className="w-5 h-5" />
+                 </button>
+              </div>
+
+              {/* Scrollable log listing and actions */}
+              <div className="flex-1 overflow-y-auto p-6 space-y-6">
+                 <div className="grid grid-cols-1 md:grid-cols-12 gap-6">
+                    {/* Log entries timeline */}
+                    <div className="md:col-span-7 space-y-4">
+                       <h3 className="text-xs font-extrabold text-slate-400 uppercase tracking-widest flex items-center gap-2">
+                         <History className="w-4 h-4 text-indigo-500" /> บันทึกประวัติเครื่องย้อนหลัง
+                       </h3>
                        
-                       <div className="p-4 space-y-4">
-                         {historyEq.status === 'maintenance' ? (
-                           <div className="space-y-3">
-                             <div className="p-4 bg-amber-500/10 border border-amber-300 rounded-xl space-y-1">
-                               <p className="text-[10px] text-amber-800 font-extrabold uppercase tracking-wider">อาการชำรุดที่พบ:</p>
-                               <p className="text-sm font-semibold text-slate-800">{historyEq.maintenanceReason || "ไม่ระบุพฤติกรรมผิดปกติ"}</p>
-                               {historyEq.maintenanceNotes && (
-                                 <p className="text-xs text-slate-600 italic mt-2 bg-white p-2.5 rounded-lg border border-slate-100">{historyEq.maintenanceNotes}</p>
-                               )}
-                               <p className="text-[11px] text-slate-400 mt-2">
-                                 ทำรายการเมื่อ: {historyEq.maintenanceAt ? format(historyEq.maintenanceAt, 'dd MMM yyyy, HH:mm') : 'N/A'} โดยคุณ <b>{historyEq.maintenanceBy || 'Admin'}</b>
-                               </p>
-                             </div>
-                             
-                             <button
-                               type="button"
-                               onClick={handleCompleteMaintenance}
-                               className="w-full py-3 px-4 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-xl text-xs transition-colors shadow-sm flex items-center justify-center gap-1.5 cursor-pointer"
-                             >
-                               <CheckCircle className="w-4 h-4" />
-                               ซ่อมบำรุงเสร็จสิ้น (คืนสถานะพร้อมใช้งาน)
-                             </button>
-                           </div>
-                         ) : (
-                           <div>
-                             {!showMaintForm ? (
-                               <div className="flex items-center justify-between gap-3">
-                                 <p className="text-xs font-semibold text-slate-500">เครื่องมือทำงานเป็นปกติ พร้อมสำหรับการสแกนตรวจสอบ</p>
-                                 <button
-                                   type="button"
-                                   onClick={() => setShowMaintForm(true)}
-                                   className="py-1.5 px-3.5 bg-amber-500 hover:bg-amber-600 text-white font-bold rounded-xl text-xs transition-colors flex items-center gap-1.5 cursor-pointer"
-                                 >
-                                   <Wrench className="w-3.5 h-3.5" />
-                                   แจ้งเครื่องชำรุด / ส่งซ่อม
-                                 </button>
-                               </div>
-                             ) : (
-                               <div className="p-4 bg-amber-500/5 border border-amber-200 rounded-2xl space-y-3.5 animate-in fade-in slide-in-from-top-2">
-                                 <div className="grid grid-cols-2 gap-3">
-                                   <div>
-                                     <label className="block text-[10px] font-bold text-amber-800 uppercase tracking-wider mb-1">รหัสผู้แจ้งซ่อม *</label>
-                                     <input 
-                                       type="text" 
-                                       required
-                                       value={maintBy}
-                                       onChange={e => setMaintBy(e.target.value)}
-                                       placeholder="รหัสพนักงาน SC-101" 
-                                       className="w-full text-xs p-2.5 bg-white border border-slate-200 rounded-lg outline-none focus:ring-1 focus:ring-amber-500"
-                                     />
-                                   </div>
-                                   <div>
-                                     <label className="block text-[10px] font-bold text-amber-800 uppercase tracking-wider mb-1">อาการ/ปัญหาที่พบ *</label>
-                                     <input 
-                                       type="text" 
-                                       required
-                                       value={maintReason}
-                                       onChange={e => setMaintReason(e.target.value)}
-                                       placeholder="หน้าจอควบคุมกะพริบถี่ / ค่าความร้อนไม่ตรง" 
-                                       className="w-full text-xs p-2.5 bg-white border border-slate-200 rounded-lg outline-none focus:ring-1 focus:ring-amber-500"
-                                     />
-                                   </div>
-                                 </div>
-                                 <div>
-                                   <label className="block text-[10px] font-bold text-amber-800 uppercase tracking-wider mb-1">รายละเอียดทางเทคนิคเพิ่มเติม</label>
-                                   <textarea 
-                                     rows={2}
-                                     value={maintNotes}
-                                     onChange={e => setMaintNotes(e.target.value)}
-                                     placeholder="ระบุความเสียหายโดยละเอียด หรือ ข้อควรระวังเพิ่มเติม..." 
-                                     className="w-full text-xs p-2.5 bg-white border border-slate-200 rounded-lg outline-none focus:ring-1 focus:ring-amber-500"
-                                   />
-                                 </div>
-                                 
-                                 <div className="flex justify-end gap-2 pt-1">
-                                   <button 
-                                     type="button" 
-                                     onClick={() => setShowMaintForm(false)} 
-                                     className="px-3 py-1.5 text-xs font-semibold text-slate-500 bg-white border border-slate-200 rounded-xl hover:bg-slate-100 cursor-pointer"
-                                   >
-                                     ยกเลิก
-                                   </button>
-                                   <button 
-                                     type="button" 
-                                     onClick={handleStartMaintenance}
-                                     className="px-4 py-1.5 text-xs font-bold text-white bg-amber-600 rounded-xl hover:bg-amber-500 shadow-sm cursor-pointer"
-                                   >
-                                     ยืนยันล็อคสถานะปิดซ่อม
-                                   </button>
-                                 </div>
-                               </div>
-                             )}
-                           </div>
-                         )}
-                       </div>
-                     </div>
-
-                     {/* Log History */}
-                     <div className="space-y-3.5">
-                        <div className="flex justify-between items-center px-1">
-                           <h3 className="text-xs font-extrabold text-slate-500 tracking-wider uppercase">ประวัติการบันทึกเครื่องจักร</h3>
-                           <select 
-                              value={historyDateFilter}
-                              onChange={(e) => setHistoryDateFilter(e.target.value)}
-                              className="px-3 py-1.5 bg-white border border-slate-200 rounded-xl text-xs font-bold text-slate-700 outline-none cursor-pointer"
-                           >
-                              <option value="">ทั้งหมด</option>
-                              {Array.from(new Set(historyLogs.map(l => format(l.timestamp, 'yyyy-MM-dd')))).map(dateStr => (
-                                <option key={dateStr} value={dateStr}>{format(new Date(dateStr + 'T00:00:00'), 'dd MMM yyyy')}</option>
-                              ))}
-                           </select>
-                        </div>
-
-                        <div className="border border-slate-200/60 rounded-2xl divide-y divide-slate-100 overflow-hidden bg-white max-h-[300px] overflow-y-auto shadow-sm">
-                           {historyLogs.filter(log => !historyDateFilter || format(log.timestamp, 'yyyy-MM-dd') === historyDateFilter).length === 0 ? (
-                              <div className="p-8 text-center text-slate-400 text-xs italic">
-                                 ไม่พบประวัติผลการตรวจในช่วงตัวกรองนี้
-                              </div>
+                       <div className="space-y-3.5 max-h-[400px] overflow-y-auto pr-1">
+                           {getShiftHistoryItems().length === 0 ? (
+                              <p className="text-xs font-bold text-slate-400 italic py-6 text-center bg-slate-50 border border-slate-100 rounded-xl">ไม่มีข้อมูลกะการทำงานในช่วงเวลาที่เลือก</p>
                            ) : (
-                              historyLogs.filter(log => !historyDateFilter || format(log.timestamp, 'yyyy-MM-dd') === historyDateFilter).map(log => (
-                                 <div key={log.id} onClick={() => handleOpenLog(log)} className="p-4 px-5 flex items-center justify-between hover:bg-indigo-50/20 cursor-pointer transition-colors">
-                                    <div>
-                                       <p className="font-bold text-slate-900 text-sm">{format(log.timestamp, 'dd MMM yyyy')} <span className="text-slate-400 font-normal ml-2 font-mono text-xs">{format(log.timestamp, 'HH:mm')} น.</span></p>
-                                       <p className="text-[11px] text-slate-500 mt-1">ผู้ตรวจ: {log.operatorName} · กะ: {log.shift}{log.checkCycle ? ` · รอบตรวจ: ${log.checkCycle === 'all' ? 'ทั้งหมด' : log.checkCycle}` : ''}</p>
-                                    </div>
-                                    <span className={cn("px-2.5 py-1 rounded-xl text-[10px] font-extrabold capitalize tracking-wider whitespace-nowrap border shadow-sm", 
-                                       log.status === 'passed' ? "bg-emerald-500/10 border-emerald-300 text-emerald-800" : "bg-rose-500/10 border-rose-300 text-rose-800"
-                                    )}>
-                                       {log.status === 'passed' ? 'ปกติ' : 'ผิดปกติ'}
-                                    </span>
-                                 </div>
-                              ))
+                              getShiftHistoryItems().map(item => {
+                                 if (item.log) {
+                                    return (
+                                       <div key={item.id} onClick={() => handleOpenLog(item.log)} className="p-3.5 rounded-xl border border-slate-200/60 hover:border-indigo-300 hover:shadow-sm bg-white transition-all cursor-pointer flex justify-between items-center text-xs">
+                                          <div>
+                                             <div className="flex items-center gap-2">
+                                                <span className="font-bold text-slate-800">{item.dateDisplay}</span>
+                                                <span className="font-bold text-indigo-600 bg-indigo-50 border border-indigo-100 px-2 py-0.5 rounded text-[10px]">
+                                                   {item.shift === 'DAY' ? '🌞 กะเช้า (08.00 - 20.00 น.)' : '🌙 กะดึก (20.00 - 08.00 น.)'}
+                                                </span>
+                                             </div>
+                                             <p className="text-[10px] text-slate-400 mt-1 font-semibold truncate max-w-[200px]">ผู้บันทึก: {item.operatorName}</p>
+                                          </div>
+                                          <span className={cn("px-2 py-0.5 rounded font-extrabold text-[10px]", 
+                                             item.isIdle 
+                                               ? "bg-sky-50 text-sky-700 border border-sky-200" 
+                                               : item.isIncomplete
+                                                 ? "bg-amber-50 text-amber-700 border border-amber-200"
+                                                 : item.isPassed 
+                                                   ? "bg-emerald-50 text-emerald-700 border border-emerald-200" 
+                                                   : "bg-rose-50 text-rose-700 border-rose-200"
+                                          )}>
+                                             {item.isIdle ? '💤 สแตนบาย' : item.isIncomplete ? '⚠️ ตรวจไม่ครบ' : item.isPassed ? 'ผ่านปกติ' : 'ผิดสเปก'}
+                                         </span>
+                                       </div>
+                                    );
+                                 } else {
+                                    return (
+                                       <div key={item.id} className="p-3.5 rounded-xl border border-amber-200/40 bg-amber-500/5 flex justify-between items-center text-xs">
+                                          <div>
+                                             <div className="flex items-center gap-2">
+                                                <span className="font-bold text-slate-400">{item.dateDisplay}</span>
+                                                <span className="font-bold text-amber-600 bg-amber-50 border border-amber-100 px-2 py-0.5 rounded text-[10px]">
+                                                   {item.shift === 'DAY' ? '🌞 กะเช้า (08.00 - 20.00 น.)' : '🌙 กะดึก (20.00 - 08.00 น.)'}
+                                                </span>
+                                             </div>
+                                             <p className="text-[10px] text-rose-600 font-extrabold mt-1">
+                                                ⚠️ ค้างการสแกนตรวจเช็กค่าควบคุมประจำกะ
+                                             </p>
+                                          </div>
+                                          <span className="px-2 py-0.5 rounded font-extrabold text-[10px] bg-amber-100 text-amber-800 border border-amber-200">
+                                             ⏳ ค้างตรวจ
+                                          </span>
+                                       </div>
+                                    );
+                                 }
+                              })
                            )}
                         </div>
-                     </div>
-                  </div>
-               </motion.div>
-            </motion.div>
-         )}
-      </AnimatePresence>
+                    </div>
 
-      {/* Log Details Modal */}
-      <AnimatePresence>
-         {selectedLog && (
-            <motion.div 
-               initial={{ opacity: 0 }}
-               animate={{ opacity: 1 }}
-               exit={{ opacity: 0 }}
-               className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/40 backdrop-blur-sm"
-            >
-               <motion.div 
-                  initial={{ opacity: 0, scale: 0.95, y: 10 }}
-                  animate={{ opacity: 1, scale: 1, y: 0 }}
-                  exit={{ opacity: 0, scale: 0.95, y: 10 }}
-                  className="bg-white rounded-3xl shadow-2xl w-full max-w-2xl overflow-hidden max-h-[90vh] flex flex-col border border-slate-100"
-               >
-                  <div className="px-6 py-5 border-b border-slate-100 flex justify-between items-center bg-slate-50">
-                     <div>
-                        <h2 className="text-lg font-bold text-slate-900 tracking-tight">รายละเอียดใบบันทึกผลการตรวจเช็ก</h2>
-                        <p className="text-xs text-slate-500 mt-1">{logEq?.name || 'Equipment'} · รหัส {logEq?.code} · บันทึกเวลา {format(selectedLog.timestamp, 'dd MMM yyyy, HH:mm น.')}</p>
-                     </div>
-                     <button onClick={() => setSelectedLog(null)} className="p-2 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-full transition-colors">
-                        <X className="w-5 h-5" />
-                     </button>
-                  </div>
-                  
-                  <div className="p-6 overflow-y-auto flex-1 space-y-6">
-                     <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                        <div className="bg-slate-50 border border-slate-100 p-3 rounded-xl">
-                            <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-0.5">ผู้สแกนตรวจสอบ</p>
-                            <p className="font-semibold text-slate-800 text-xs sm:text-sm">{selectedLog.operatorName}</p>
-                        </div>
-                        <div className="bg-slate-50 border border-slate-100 p-3 rounded-xl">
-                            <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-0.5">กะการทำงาน (Shift)</p>
-                            <p className="font-semibold text-slate-800 text-xs sm:text-sm">{selectedLog.shift === 'DAY' ? 'กะกลางวัน' : selectedLog.shift === 'NIGHT' ? 'กะกลางคืน' : 'กะพิเศษ'}</p>
-                        </div>
-                        <div className="bg-slate-50 border border-slate-100 p-3 rounded-xl">
-                            <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-0.5">ประเภทการตรวจเช็ก</p>
-                            <p className="font-semibold text-slate-800 text-xs sm:text-sm capitalize">{selectedLog.checkCycle === 'all' ? 'ทุกพารามิเตอร์' : selectedLog.checkCycle === 'daily' ? 'รายวันเท่านั้น' : 'ระหว่างใช้งาน'}</p>
-                        </div>
-                        <div className="bg-slate-50 border border-slate-100 p-3 rounded-xl">
-                            <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-0.5">ประเมินสถานะรวม</p>
-                            <span className={cn("px-2.5 py-0.5 rounded-lg text-xs font-bold inline-block mt-0.5 border shadow-sm", 
-                               selectedLog.status === 'passed' ? "bg-emerald-500/10 border-emerald-300 text-emerald-800" : "bg-rose-500/10 border-rose-300 text-rose-800"
-                            )}>
-                               {selectedLog.status === 'passed' ? 'ผ่าน (ปกติ)' : 'หลุดสเปก / ต้องแก้ไข'}
-                            </span>
-                        </div>
-                     </div>
-
-                     <div>
-                       <h3 className="text-xs font-bold text-slate-400 mb-3 uppercase tracking-wider">ผลพารามิเตอร์รายพารามิเตอร์</h3>
-                       <div className="space-y-3">
-                          {logItems.length === 0 ? (
-                             <p className="text-sm text-slate-500 italic">ไม่มีข้อมูลพารามิเตอร์ หรือค่ากำหนดถูกลบออกแล้ว</p>
-                          ) : (
-                             logItems.map(item => {
-                                 const response = selectedLog.responses.find(r => r.checkItemId === item.id);
-                                 const isOOC = response && !response.isNormal;
-                                 return (
-                                     <div key={item.id} className={cn("p-4 rounded-xl border flex justify-between items-center transition-colors", isOOC ? "bg-rose-500/5 border-rose-300" : "bg-white border-slate-200")}>
-                                        <div>
-                                           <p className="font-bold text-sm text-slate-900">{item.name}</p>
-                                           <p className="text-xs text-slate-500 mt-0.5">เกณฑ์มาตรฐาน: {item.criteriaText || 'ไม่มีเกณฑ์เพิ่มเติม'}</p>
-                                        </div>
-                                        <div className="text-right">
-                                           {response ? (
-                                               <div className="flex items-center gap-2">
-                                                  <span className={cn("font-bold font-mono text-sm", isOOC ? "text-rose-600" : "text-emerald-600")}>
-                                                     {response.type === 'boolean' ? (response.valueBoolean ? "ผ่าน (Pass)" : "ไม่ผ่าน (Fail)") : `${response.valueNumeric} ${item.unit || ''}`}
-                                                  </span>
-                                                  {isOOC ? <AlertTriangle className="w-4 h-4 text-rose-500 shrink-0" /> : <CheckCircle className="w-4 h-4 text-emerald-500 shrink-0" />}
-                                               </div>
-                                           ) : (
-                                               <span className="text-xs text-slate-400 italic">ไม่มีข้อมูลการตอบกลับ</span>
-                                           )}
-                                        </div>
-                                     </div>
-                                 )
-                             })
-                          )}
-                       </div>
-                     </div>
-
-                     <div className="bg-slate-50 rounded-2xl p-4 border border-slate-200">
-                          <div className="flex justify-between items-start mb-3">
-                             <h3 className="text-xs font-bold text-slate-900 flex items-center gap-2">
-                               <MessageSquare className="w-4 h-4 text-slate-500" /> 
-                               ข้อความบันทึกเพิ่มเติมและการดำเนินการแก้ไข
-                             </h3>
-                             {!editingNotes && (
-                                <button onClick={() => setEditingNotes(true)} className="text-xs font-bold text-indigo-600 bg-indigo-50 px-2.5 py-1 rounded-lg flex items-center gap-1 hover:bg-indigo-100 transition-colors cursor-pointer">
-                                   <Edit2 className="w-3 h-3" /> แก้ไขประวัติ
+                    {/* Maintenance Actions Trigger Deck */}
+                    <div className="md:col-span-5 border-t md:border-t-0 md:border-l border-slate-100 pt-6 md:pt-0 md:pl-6 space-y-4">
+                       <h3 className="text-xs font-extrabold text-slate-400 uppercase tracking-widest flex items-center gap-2">
+                         <Wrench className="w-4 h-4 text-indigo-500" /> จัดการบำรุงรักษา (Maintenance Desk)
+                       </h3>
+                       
+                       {historyEq.status === 'active' ? (
+                          <div className="space-y-4">
+                             {!showMaintForm ? (
+                                <button 
+                                  onClick={() => setShowMaintForm(true)}
+                                  className="w-full py-3 bg-red-600 hover:bg-red-700 text-white font-bold rounded-xl text-xs flex items-center justify-center gap-2 shadow-md shadow-red-500/10 cursor-pointer"
+                                >
+                                   <AlertTriangle className="w-4 h-4" />
+                                   สั่งระงับใช้เครื่อง / ส่งชำรุด (Breakdown)
                                 </button>
+                             ) : (
+                                <div className="space-y-3 bg-red-50/50 p-4 rounded-2xl border border-red-100">
+                                   <div>
+                                      <label className="block text-[10px] font-bold text-red-800 uppercase mb-1">สาเหตุความผิดปกติ / อาการเสีย *</label>
+                                      <input type="text" required value={maintReason} onChange={e => setMaintReason(e.target.value)} className="w-full text-xs p-2 bg-white border border-red-200 rounded-lg focus:ring-1 focus:ring-red-500" placeholder="เช่น อุณหภูมิพุ่งสูงเกิน 300°C" />
+                                   </div>
+                                   <div>
+                                      <label className="block text-[10px] font-bold text-red-800 uppercase mb-1">หมายเหตุเพิ่มเติม</label>
+                                      <textarea value={maintNotes} onChange={e => setMaintNotes(e.target.value)} className="w-full text-xs p-2 bg-white border border-red-200 rounded-lg focus:ring-1 focus:ring-red-500" placeholder="ระบุอาการอื่นเพิ่มเติม..." />
+                                   </div>
+                                   <div>
+                                      <label className="block text-[10px] font-bold text-red-800 uppercase mb-1">ผู้สั่งปิดเครื่องบำรุงรักษา *</label>
+                                      <input type="text" required value={maintBy} onChange={e => setMaintBy(e.target.value)} className="w-full text-xs p-2 bg-white border border-red-200 rounded-lg focus:ring-1 focus:ring-red-500" placeholder="เช่น SC-101 / แอดมิน" />
+                                   </div>
+                                   <div className="flex gap-2 pt-2">
+                                      <button onClick={() => setShowMaintForm(false)} className="flex-1 py-1.5 bg-white hover:bg-slate-50 border border-slate-200 rounded-lg text-[10px] font-bold text-slate-600">ยกเลิก</button>
+                                      <button onClick={handleStartMaintenance} className="flex-1 py-1.5 bg-red-600 hover:bg-red-700 text-white rounded-lg text-[10px] font-bold shadow-xs">สั่งหยุดใช้งานทันที</button>
+                                   </div>
+                                </div>
                              )}
                           </div>
-                          
-                          {editingNotes ? (
-                              <div className="space-y-4">
-                                 <div>
-                                     <label className="block text-xs font-semibold text-slate-700 mb-1">บังคับเปลี่ยนสถานะผลตรวจ</label>
-                                     <select value={editStatusText} onChange={e => setEditStatusText(e.target.value as any)} className="w-full text-sm p-2.5 bg-white border border-slate-200 rounded-lg focus:ring-1 focus:ring-indigo-500 outline-none">
-                                        <option value="passed">ผ่านการตรวจสอบ / ทำงานปกติ (Passed)</option>
-                                        <option value="needs_attention">พบสิ่งต้องดูแล / เฝ้าระวัง (OOC)</option>
-                                        <option value="failed">ห้ามใช้งานเด็ดขาด / ชำรุดพัง (Failed)</option>
-                                     </select>
-                                 </div>
-                                 <div>
-                                     <label className="block text-xs font-semibold text-slate-700 mb-1">รายละเอียด / การแก้ไขที่ทำไปแล้ว</label>
-                                     <textarea 
-                                        value={editNotesText} 
-                                        onChange={e => setEditNotesText(e.target.value)} 
-                                        className="w-full text-sm p-3 border border-slate-200 rounded-xl min-h-[80px] focus:ring-1 focus:ring-indigo-500 outline-none bg-white" 
-                                        placeholder="ระบุแนวทางประคองงาน บันทึกผลสอบเทียบ หรือการเปลี่ยนอะไหล่..."
-                                     />
-                                 </div>
-                                 <div className="flex justify-end gap-2">
-                                    <button onClick={() => setEditingNotes(false)} className="px-3 py-1.5 text-xs font-bold text-slate-600 bg-slate-200 rounded-lg hover:bg-slate-300 transition-colors cursor-pointer">ยกเลิก</button>
-                                    <button onClick={handleSaveUpdate} className="px-4 py-1.5 text-xs font-bold text-white bg-indigo-600 rounded-lg hover:bg-indigo-700 transition-colors cursor-pointer">บันทึกข้อมูลปรับปรุง</button>
-                                 </div>
-                              </div>
-                          ) : (
-                              <p className={cn("text-sm leading-relaxed", selectedLog.notes ? "text-slate-700" : "text-slate-400 italic")}>
-                                 {selectedLog.notes || "ไม่มีข้อสังเกตพิเศษระบุไว้"}
-                              </p>
-                          )}
-                     </div>
-                  </div>
-               </motion.div>
+                       ) : (
+                          <div className="bg-emerald-50 border border-emerald-100 p-4 rounded-2xl space-y-3.5">
+                             <div className="space-y-1">
+                                <h4 className="text-xs font-extrabold text-emerald-900 uppercase">อยู่ระหว่างการแก้ไขปัญหาระบบ</h4>
+                                <p className="text-[11px] text-emerald-700 leading-relaxed font-medium">
+                                   <strong>ผู้สั่งหยุดเครื่อง:</strong> {historyEq.maintenanceBy}<br/>
+                                   <strong>อาการเสีย:</strong> {historyEq.maintenanceReason}
+                                </p>
+                             </div>
+                             <button 
+                               onClick={handleCompleteMaintenance}
+                               className="w-full py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl text-xs flex items-center justify-center gap-1.5 shadow-md shadow-emerald-500/10 cursor-pointer"
+                             >
+                                <CheckCircle className="w-4 h-4" /> ปล่อยคืนเครื่อง / ซ่อมบำรุงเสร็จสิ้น
+                             </button>
+                          </div>
+                       )}
+                    </div>
+                 </div>
+              </div>
             </motion.div>
-         )}
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Log Details Modal (Nested display inside history) */}
+      <AnimatePresence>
+        {selectedLog && (
+          <motion.div 
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/40 backdrop-blur-sm"
+          >
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.95, y: 15 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 15 }}
+              className="bg-white rounded-3xl shadow-2xl w-full max-w-2xl overflow-hidden max-h-[85vh] flex flex-col border border-slate-100"
+            >
+              <div className="px-6 py-5 border-b border-slate-100 bg-slate-50/80 flex justify-between items-center shrink-0">
+                 <div>
+                    <h2 className="text-lg font-bold text-slate-900">บันทึกตรวจเช็คฉบับจริงหน้างาน</h2>
+                    <p className="text-xs text-slate-500 mt-0.5">{logEq?.name || 'Equipment'} • {format(selectedLog.timestamp, 'dd MMM yyyy, HH:mm น.')}</p>
+                 </div>
+                 <button onClick={() => setSelectedLog(null)} className="p-2 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-full transition-colors">
+                   <X className="w-5 h-5" />
+                 </button>
+              </div>
+              
+              <div className="p-6 overflow-y-auto flex-1 space-y-5">
+                 {(() => {
+                    const itemsWithResponses = logItems.map(item => {
+                       const resp = selectedLog.responses.find(r => r.checkItemId === item.id || (r.itemName && r.itemName.toLowerCase() === item.name.toLowerCase()));
+                       return { item, resp };
+                    });
+                    const matchedResponseIds = new Set();
+                    itemsWithResponses.forEach(x => {
+                       if (x.resp) matchedResponseIds.add(x.resp.checkItemId);
+                    });
+                    const orphanResponses = selectedLog.responses.filter(r => !matchedResponseIds.has(r.checkItemId));
+
+                     // Group itemsWithResponses by category
+                     const groups: Record<string, typeof itemsWithResponses> = {};
+                     itemsWithResponses.forEach((entry) => {
+                        const cat = entry.item.category || 'ตรวจสอบความพร้อมของเครื่องมือ';
+                        if (!groups[cat]) {
+                           groups[cat] = [];
+                        }
+                        groups[cat].push(entry);
+                     });
+                    
+                    const totalItemsCount = logItems.length + orphanResponses.length;
+                    const passedCount = selectedLog.responses.filter(r => r.isNormal).length;
+                    const failedCount = selectedLog.responses.filter(r => !r.isNormal).length;
+                    const pendingCount = Math.max(0, logItems.length - matchedResponseIds.size);
+
+                    return (
+                       <div className="space-y-4 w-full text-left">
+                          {/* Summary Statistics Dashboard within Modal */}
+                          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                             <div className="bg-slate-100/80 border border-slate-200/50 rounded-2xl p-3 text-center">
+                                <span className="block text-[10px] font-extrabold text-slate-400 uppercase tracking-wider">รายการทั้งหมด</span>
+                                <span className="text-lg font-black text-slate-800 font-mono">{totalItemsCount} <span className="text-[11px] font-bold">ข้อ</span></span>
+                             </div>
+                             <div className="bg-emerald-50 border border-emerald-100 rounded-2xl p-3 text-center">
+                                <span className="block text-[10px] font-extrabold text-emerald-600 uppercase tracking-wider">ตรวจแล้วผ่าน</span>
+                                <span className="text-lg font-black text-emerald-700 font-mono">{passedCount} <span className="text-[11px] font-bold">ข้อ</span></span>
+                             </div>
+                             <div className="bg-rose-50 border border-rose-100 rounded-2xl p-3 text-center">
+                                <span className="block text-[10px] font-extrabold text-rose-600 uppercase tracking-wider">พบสิ่งผิดปกติ / พัง</span>
+                                <span className="text-lg font-black text-rose-700 font-mono">{failedCount} <span className="text-[11px] font-bold">ข้อ</span></span>
+                             </div>
+                             <div className={cn(
+                                "border rounded-2xl p-3 text-center transition-all",
+                                pendingCount > 0 ? "bg-amber-50 border-amber-200" : "bg-slate-50 border-slate-100"
+                             )}>
+                                <span className={cn("block text-[10px] font-extrabold uppercase tracking-wider", pendingCount > 0 ? "text-amber-600" : "text-slate-400")}>ค้างตรวจ / ไม่ระบุ</span>
+                                <span className={cn("text-lg font-black font-mono", pendingCount > 0 ? "text-amber-700" : "text-slate-500")}>{pendingCount} <span className="text-[11px] font-bold">ข้อ</span></span>
+                             </div>
+                          </div>
+
+                          <div className="bg-slate-50 rounded-2xl p-4 border border-slate-200/60 space-y-4">
+                             <div className="flex justify-between items-center border-b border-slate-200/60 pb-3">
+                                <span className="text-xs font-bold text-slate-500 uppercase">สถานะประเมินสรุป</span>
+                                <span className={cn("px-2.5 py-1 rounded text-xs font-extrabold shadow-xs text-white", 
+                                   selectedLog.status === 'passed' ? "bg-emerald-500" : "bg-rose-500"
+                                )}>{selectedLog.status === 'passed' ? 'ผ่านการตรวจสอบ' : 'พบพารามิเตอร์ผิดปกติ'}</span>
+                             </div>
+
+                             <div className="space-y-4">
+                                <p className="text-xs font-black text-slate-500 uppercase tracking-wider">รายละเอียดสถานะรายข้อตรวจสอบ (Inspection Details)</p>
+                                
+                                {Object.entries(groups).map(([category, entries]) => (
+                                   <div key={category} className="space-y-3">
+                                      {/* Category Header with Clean Line */}
+                                      <div className="flex items-center gap-2 mt-4">
+                                         <span className="w-1.5 h-1.5 rounded-full bg-indigo-500"></span>
+                                         <span className="text-[11px] font-black text-slate-600 uppercase tracking-wider">{category}</span>
+                                         <div className="h-px bg-slate-200/80 flex-1"></div>
+                                      </div>
+
+                                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                                         {entries.map(({ item, resp }) => {
+                                            const isRequired = item.isRequired;
+                                            return (
+                                               <div 
+                                                  key={item.id} 
+                                                  className={cn(
+                                                     "p-3 rounded-xl border flex flex-col justify-between text-xs font-semibold bg-white transition-all shadow-xs",
+                                                     !resp 
+                                                        ? "border-amber-200/70 bg-amber-50/20" 
+                                                        : resp.isNormal 
+                                                           ? "border-emerald-100 bg-emerald-50/10 hover:border-emerald-200" 
+                                                           : "border-rose-200 bg-rose-50/30 hover:border-rose-300"
+                                                  )}
+                                               >
+                                                  <div className="flex justify-between items-start gap-1.5 mb-2">
+                                                     <div className="min-w-0">
+                                                        <span className="font-extrabold text-slate-800 leading-snug">{item.name}</span>
+                                                     </div>
+                                                     {isRequired && (
+                                                        <span className="text-[9px] font-black text-red-500 bg-red-50 px-1 rounded border border-red-100 shrink-0">จำเป็น</span>
+                                                     )}
+                                                  </div>
+
+                                                  <div className="flex justify-between items-center pt-2 border-t border-slate-100 text-[11px] font-bold">
+                                                     <div className="text-slate-500 font-semibold">
+                                                        เกณฑ์: <span className="text-slate-700 font-bold">{item.criteriaText || (item.type === 'boolean' ? (item.expectedBoolean ? 'PASS' : 'FAIL') : `${item.minValue} - ${item.maxValue} ${item.unit || ''}`)}</span>
+                                                     </div>
+
+                                                     <div className="shrink-0 font-mono">
+                                                        {resp ? (
+                                                           <span className={cn(
+                                                              "px-2 py-0.5 rounded font-black text-xs",
+                                                              resp.isNormal ? "bg-emerald-100 text-emerald-800" : "bg-rose-100 text-rose-800"
+                                                           )}>
+                                                              {resp.type === 'boolean' ? (resp.valueBoolean ? 'PASS' : 'FAIL') : `${resp.valueNumeric} ${item.unit || ''}`}
+                                                           </span>
+                                                        ) : (
+                                                           <span className="px-2 py-0.5 rounded bg-amber-100 text-amber-800 text-[10px] font-black">
+                                                              ⚠️ ค้างตรวจ / ไม่ระบุ
+                                                           </span>
+                                                        )}
+                                                     </div>
+                                                  </div>
+                                               </div>
+                                            );
+                                         })}
+                                      </div>
+                                   </div>
+                                ))}
+
+                                {/* Orphan historical responses */}
+                                {orphanResponses.length > 0 && (
+                                   <div className="space-y-3">
+                                      <div className="flex items-center gap-2 mt-4">
+                                         <span className="w-1.5 h-1.5 rounded-full bg-slate-400"></span>
+                                         <span className="text-[11px] font-black text-slate-500 uppercase tracking-wider">ประวัติบันทึกเดิมนอกรายการ</span>
+                                         <div className="h-px bg-slate-200/80 flex-1"></div>
+                                      </div>
+
+                                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                                         {orphanResponses.map((resp, idx) => (
+                                            <div 
+                                               key={resp.checkItemId} 
+                                               className={cn(
+                                                  "p-3 rounded-xl border flex flex-col justify-between text-xs font-semibold bg-white transition-all shadow-xs",
+                                                  resp.isNormal ? "border-emerald-100 bg-emerald-50/10" : "border-rose-200 bg-rose-50/30"
+                                               )}
+                                            >
+                                               <div className="flex justify-between items-start gap-1.5 mb-2">
+                                                  <div className="min-w-0">
+                                                     <span className="block text-[10px] font-bold text-slate-400 uppercase tracking-tight">ประวัติเดิม</span>
+                                                     <span className="font-extrabold text-slate-800 leading-snug">{resp.itemName || `พารามิเตอร์ข้อที่ ${idx + 1}`}</span>
+                                                  </div>
+                                               </div>
+
+                                               <div className="flex justify-between items-center pt-2 border-t border-slate-100 text-[11px] font-bold">
+                                                  <div className="text-slate-500 font-semibold">
+                                                     เกณฑ์: <span className="text-slate-700 font-bold">ตรวจบันทึกประวัติเดิม</span>
+                                                  </div>
+
+                                                  <div className="shrink-0 font-mono">
+                                                     <span className={cn(
+                                                        "px-2 py-0.5 rounded font-black text-xs",
+                                                        resp.isNormal ? "bg-emerald-100 text-emerald-800" : "bg-rose-100 text-rose-800"
+                                                     )}>
+                                                        {resp.type === 'boolean' ? (resp.valueBoolean ? 'PASS' : 'FAIL') : `${resp.valueNumeric}`}
+                                                     </span>
+                                                  </div>
+                                               </div>
+                                            </div>
+                                         ))}
+                                      </div>
+                                   </div>
+                                )}
+                             </div>
+
+                             <div className="pt-3 border-t border-slate-200/60">
+                                <span className="block text-xs font-bold text-slate-500 uppercase mb-1">หมายเหตุรายงาน</span>
+                                <p className="text-xs text-slate-700 leading-relaxed bg-white p-3 rounded-xl border border-slate-100">
+                                  {selectedLog.notes || "ไม่มีข้อมูลหมายเหตุเพิ่มเติมหน้างาน"}
+                                </p>
+                             </div>
+                          </div>
+                       </div>
+                    );
+                 })()}
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
       </AnimatePresence>
     </div>
   );
 }
 
-function FilterTab({ active, onClick, label, theme = 'indigo' }: { active: boolean, onClick: () => void, label: string, theme?: 'indigo' | 'emerald' | 'amber' | 'rose' }) {
-  const activeStyles = {
-    indigo: 'bg-indigo-600 text-white shadow-sm hover:bg-indigo-700',
-    emerald: 'bg-emerald-600 text-white shadow-sm hover:bg-emerald-700',
-    amber: 'bg-amber-500 text-white shadow-sm hover:bg-amber-600',
-    rose: 'bg-rose-600 text-white shadow-sm hover:bg-rose-700'
-  };
+function MetricCard({ title, engTitle, value, subtitle, icon, trend }: { title: string, engTitle: string, value: string | number, subtitle: string, icon: React.ReactNode, trend?: 'up' | 'down' | 'neutral' | 'warning' }) {
+  return (
+    <div className="bg-white rounded-3xl shadow-sm border border-slate-200/70 p-5 sm:p-6 flex flex-col justify-between hover:shadow-md transition-all duration-300 relative overflow-hidden group cursor-default">
+      {/* Decorative colored glow on top corner */}
+      <div className={cn("absolute top-0 right-0 w-24 h-24 rounded-bl-full translate-x-6 -translate-y-6 opacity-10 group-hover:scale-110 transition-transform blur-[5px]", 
+         trend === 'up' ? "bg-emerald-400" : trend === 'down' ? "bg-rose-400" : trend === 'warning' ? "bg-red-400" : "bg-indigo-400"
+      )}></div>
 
+      <div className="flex justify-between items-start mb-3 relative z-10">
+        <div>
+          <span className="text-[10px] font-black text-slate-400 uppercase tracking-wider">{engTitle}</span>
+          <h3 className="text-slate-800 text-xs sm:text-sm font-black leading-snug mt-0.5">{title}</h3>
+        </div>
+        <div className="p-2 bg-slate-50 rounded-xl group-hover:bg-indigo-50/50 transition-colors">
+          {icon}
+        </div>
+      </div>
+
+      <div className="mt-2 relative z-10">
+        <span className={cn("text-2xl sm:text-3xl font-black font-mono tracking-tight", 
+           trend === 'up' ? "text-indigo-950" : trend === 'down' ? "text-rose-950" : trend === 'warning' ? "text-red-950" : "text-slate-900"
+        )}>{value}</span>
+        <p className="text-[10px] text-slate-500 font-bold mt-1.5 leading-snug flex items-center gap-1">
+           {trend === 'up' && <span className="text-emerald-500 font-black">▲</span>}
+           {trend === 'down' && <span className="text-rose-500 font-black">▼</span>}
+           {subtitle}
+        </p>
+      </div>
+    </div>
+  );
+}
+
+function FilterTab({ active, onClick, label, theme }: { active: boolean, onClick: () => void, label: string, theme?: 'all' | 'emerald' | 'amber' | 'rose' | 'indigo' }) {
   return (
     <button 
-      onClick={onClick} 
+      onClick={onClick}
       className={cn(
-        "px-3 py-1.5 text-xs font-bold rounded-lg transition-all shrink-0 cursor-pointer whitespace-nowrap",
-        active ? activeStyles[theme] : "text-slate-600 hover:text-slate-900 hover:bg-slate-50"
+        "px-4 py-2 rounded-lg text-xs font-extrabold uppercase transition-all whitespace-nowrap outline-none cursor-pointer",
+        active 
+          ? theme === 'emerald' ? "bg-emerald-500 text-white shadow-sm" :
+            theme === 'amber' ? "bg-amber-500 text-white shadow-sm" :
+            theme === 'rose' ? "bg-rose-500 text-white shadow-sm" :
+            theme === 'indigo' ? "bg-indigo-500 text-white shadow-sm" :
+            "bg-slate-900 text-white shadow-sm"
+          : "text-slate-500 hover:text-slate-900 hover:bg-slate-200/50"
       )}
     >
       {label}
     </button>
-  );
-}
-
-function MetricCard({ title, engTitle, value, subtitle, icon, trend }: { title: string, engTitle: string, value: string | number, subtitle: string, icon: React.ReactNode, trend: 'positive' | 'negative' | 'warning' | 'neutral' }) {
-  const trendStyles = {
-    positive: 'from-emerald-500/10 to-transparent border-emerald-500/20 text-emerald-800',
-    negative: 'from-rose-500/10 to-transparent border-rose-500/20 text-rose-800',
-    warning: 'from-amber-500/10 to-transparent border-amber-500/20 text-amber-800',
-    neutral: 'from-indigo-500/10 to-transparent border-indigo-500/20 text-indigo-800'
-  };
-
-  const bgGradient = trendStyles[trend].split(' ').slice(0, 2).join(' ');
-
-  return (
-    <motion.div 
-      initial={{ opacity: 0, y: 10 }}
-      animate={{ opacity: 1, y: 0 }}
-      className="bg-white rounded-3xl shadow-sm border border-slate-200/60 p-5 flex flex-col justify-between relative overflow-hidden group hover:shadow-md transition-all duration-300 min-h-[140px]"
-    >
-      <div className={cn("absolute inset-0 bg-gradient-to-br opacity-50 transition-opacity group-hover:opacity-100", bgGradient)}></div>
-      <div className="relative z-10 flex justify-between items-start mb-3">
-        <div>
-          <p className="text-xs font-extrabold text-slate-800 tracking-wide">{title}</p>
-          <p className="text-[9px] font-bold text-slate-400 uppercase tracking-widest mt-0.5">{engTitle}</p>
-        </div>
-        <div className="p-2.5 bg-white rounded-2xl shadow-sm border border-slate-100 group-hover:scale-110 transition-transform duration-300 shrink-0">{icon}</div>
-      </div>
-      <div className="relative z-10 mt-auto">
-        <h3 className="text-3xl sm:text-4xl font-extrabold tracking-tight text-slate-800 group-hover:text-indigo-900 transition-colors drop-shadow-sm font-mono tabular-nums">{value}</h3>
-        <p className="text-[10px] sm:text-xs text-slate-500 mt-1.5 font-semibold leading-relaxed line-clamp-1">{subtitle}</p>
-      </div>
-    </motion.div>
   );
 }

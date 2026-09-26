@@ -62,6 +62,7 @@ export interface CheckLog {
 export interface CheckResponse {
   checkItemId: string;
   type: CheckItemType;
+  itemName?: string; // Cache name at check time to prevent matching failures
   valueBoolean?: boolean;
   valueNumeric?: number;
   valueText?: string;
