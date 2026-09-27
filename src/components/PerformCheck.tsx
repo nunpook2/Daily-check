@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
-import { fetchEquipments, fetchCheckItems, fetchLogs, saveCheckLog, fetchOperators } from '../lib/db';
-import { Equipment, CheckItem, CheckResponse, Operator } from '../types';
+import { fetchEquipments, fetchCheckItems, fetchLogs, saveCheckLog, fetchOperators, fetchTimeWindowSettings } from '../lib/db';
+import { Equipment, CheckItem, CheckResponse, Operator, TimeWindowSettings } from '../types';
 import { format } from 'date-fns';
 import { 
   ChevronRight, 
@@ -53,15 +53,21 @@ export default function PerformCheck({ onSaved, initialEqCode, selectedDept = 'a
   const [shift, setShift] = useState<'DAY' | 'NIGHT' | 'OTHER' | 'NA'>('DAY');
   const [checkType, setCheckType] = useState<string>('all');
   const [notes, setNotes] = useState('');
+  const [skipOnUse, setSkipOnUse] = useState(false);
   const [saving, setSaving] = useState(false);
 
   const filteredItems = useMemo(() => {
     return items.filter(item => {
+      if (skipOnUse && item.frequency === 'on-use') return false;
       if (checkType === 'all') return true;
       if (checkType === 'daily' && (!item.frequency || item.frequency === 'daily')) return true;
       return item.frequency === checkType;
     });
-  }, [items, checkType]);
+  }, [items, checkType, skipOnUse]);
+
+  const hasOnUseItems = useMemo(() => {
+    return items.some(item => item.frequency === 'on-use');
+  }, [items]);
 
   useEffect(() => {
     loadEq();
@@ -294,6 +300,60 @@ export default function PerformCheck({ onSaved, initialEqCode, selectedDept = 'a
     return false;
   };
 
+  const handleSetStandbyFromCheck = async () => {
+    if (!selectedEq) return;
+    if (!operatorId) {
+      alert("⚠️ กรุณาเลือกชื่อพนักงานผู้รับผิดชอบตรวจเช็กในโซนที่ 1 ก่อน");
+      return;
+    }
+
+    const confirmSet = window.confirm(`คุณต้องการบันทึกว่าเครื่อง "${selectedEq.name}" (${selectedEq.code}) ในกะ ${shift === 'DAY' ? 'กลางวัน' : shift === 'NIGHT' ? 'กลางคืน' : 'พิเศษ'} เป็น "ไม่ได้ใช้งาน / เครื่องติดทดสอบ" ใช่หรือไม่?\n\n(ระบบจะบันทึกสถานะให้ทันที เพื่อยืนยันว่าคุณเดินมาตรวจสอบแล้ว และจะไม่ขึ้นค้างตรวจในกะนี้)`);
+    if (!confirmSet) return;
+
+    setSaving(true);
+
+    const op = operators.find(o => o.employeeId === operatorId);
+    const opName = op ? op.name : operatorId;
+
+    // Create default passing responses for all check items for this equipment
+    const eqItems = items;
+    const finalResponses = eqItems.map(item => ({
+      checkItemId: item.id!,
+      type: item.type,
+      itemName: item.name,
+      valueBoolean: item.type === 'boolean' ? true : undefined,
+      valueNumeric: item.type === 'numeric' ? (item.minValue ?? 0) : undefined,
+      isNormal: true
+    }));
+
+    try {
+      await saveCheckLog({
+        equipmentId: selectedEq.id,
+        timestamp: Date.now(),
+        dateKey: format(new Date(), 'yyyy-MM-dd'),
+        shift: shift,
+        checkCycle: 'all',
+        operatorId: operatorId,
+        operatorName: opName,
+        status: 'passed',
+        notes: 'ไม่ได้ใช้งาน / เครื่องติดทดสอบ (Standby / Testing) - บันทึกจากหน้างาน',
+        actionTaken: 'พนักงานเดินมาตรวจสอบหน้าเครื่องแล้วพบว่าไม่ได้ใช้งานหรือติดทำการทดสอบ',
+        responses: finalResponses,
+        skipOnUse: true,
+        isLate: false
+      });
+
+      alert(`🎉 บันทึกสถานะ "ไม่ได้ใช้งาน / เครื่องติดทดสอบ" เรียบร้อยแล้ว ระบบลงบัญชีการเข้าตรวจจริงเรียบร้อย`);
+      setSaving(false);
+      setSelectedEq(null);
+      await loadEq();
+      if (onSaved) onSaved();
+    } catch (err) {
+      alert("❌ ไม่สามารถบันทึกสถานะได้ กรุณาลองใหม่อีกครั้ง");
+      setSaving(false);
+    }
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedEq || !operatorId) return;
@@ -332,6 +392,36 @@ export default function PerformCheck({ onSaved, initialEqCode, selectedDept = 'a
     const op = operators.find(o => o.employeeId === operatorId);
     const opName = op ? op.name : operatorId;
 
+    const checkIfLate = (shiftVal: string, timestamp: number) => {
+      const tw = fetchTimeWindowSettings();
+      const date = new Date(timestamp);
+      const hrs = date.getHours();
+      const mins = date.getMinutes();
+      const timeValue = hrs * 60 + mins;
+
+      if (shiftVal === 'DAY') {
+        const [sh, sm] = tw.dayStart.split(':').map(Number);
+        const [eh, em] = tw.dayEnd.split(':').map(Number);
+        const startVal = sh * 60 + sm;
+        const endVal = eh * 60 + em;
+        return timeValue < startVal || timeValue > endVal;
+      } else if (shiftVal === 'NIGHT') {
+        const [sh, sm] = tw.nightStart.split(':').map(Number);
+        const [eh, em] = tw.nightEnd.split(':').map(Number);
+        const startVal = sh * 60 + sm;
+        const endVal = eh * 60 + em;
+        
+        if (startVal <= endVal) {
+          return timeValue < startVal || timeValue > endVal;
+        } else {
+          return timeValue < startVal && timeValue > endVal;
+        }
+      }
+      return false;
+    };
+
+    const isCheckLate = checkIfLate(shift, Date.now());
+
     await saveCheckLog({
       equipmentId: selectedEq.id,
       timestamp: Date.now(),
@@ -341,9 +431,11 @@ export default function PerformCheck({ onSaved, initialEqCode, selectedDept = 'a
       operatorId: operatorId,
       operatorName: opName,
       status: logStatus,
-      notes: computedNotes,
+      notes: skipOnUse ? `${computedNotes} (ข้ามส่วนตรวจก่อนใช้งานเนื่องจากไม่ได้ผลิต)` : computedNotes,
       actionTaken: notes,
-      responses: finalResponses
+      responses: finalResponses,
+      skipOnUse: skipOnUse,
+      isLate: isCheckLate
     });
 
     setSaving(false);
@@ -539,7 +631,14 @@ export default function PerformCheck({ onSaved, initialEqCode, selectedDept = 'a
                       <select 
                         required 
                         value={operatorId}
-                        onChange={e => setOperatorId(e.target.value)}
+                        onChange={e => {
+                          const val = e.target.value;
+                          setOperatorId(val);
+                          const op = operators.find(o => o.employeeId === val);
+                          if (op && op.shift) {
+                            setShift(op.shift);
+                          }
+                        }}
                         className="w-full px-4 py-3 bg-slate-100 border-2 border-slate-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:bg-white text-sm sm:text-base font-black text-slate-900 cursor-pointer appearance-none outline-none"
                       >
                         <option value="" className="text-slate-900 font-bold">-- แตะเพื่อเลือกรายชื่อ --</option>
@@ -579,6 +678,59 @@ export default function PerformCheck({ onSaved, initialEqCode, selectedDept = 'a
                     </div>
                   </div>
                 </div>
+
+                {/* ZONE 1.5: QUICK STANDBY CARD (เครื่องไม่ได้ใช้งาน / ติดทดสอบ) */}
+                <div className="bg-amber-50 p-5 rounded-3xl border-2 border-dashed border-amber-200/80 shadow-xs space-y-3">
+                   <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+                      <div className="min-w-0 flex-1">
+                         <h4 className="text-xs sm:text-sm font-black text-amber-900 flex items-center gap-1.5">
+                            💤 บันทึกเครื่องไม่ได้ใช้งาน / ติดทดสอบอยู่?
+                         </h4>
+                         <p className="text-[10px] sm:text-xs text-amber-700 font-bold mt-1 leading-relaxed">
+                            หากพนักงานเดินมาตรวจสอบแล้วพบว่าเครื่องไม่ได้ใช้งาน หรือติดทดสอบระบบอยู่ สามารถกดบันทึกข้ามได้ทันที สถานะจะไม่ขึ้นค้างตรวจในระบบ
+                         </p>
+                      </div>
+                      <button
+                         type="button"
+                         onClick={handleSetStandbyFromCheck}
+                         className="w-full sm:w-auto px-4 py-2.5 bg-amber-600 hover:bg-amber-700 text-white font-extrabold text-xs sm:text-sm rounded-xl transition-all shadow-md active:scale-95 shrink-0 flex items-center justify-center gap-1.5 cursor-pointer border border-amber-700"
+                      >
+                         💤 บันทึกเครื่องติดทดสอบ
+                      </button>
+                   </div>
+                </div>
+
+                {hasOnUseItems && (
+                  <div className="bg-white p-5 rounded-3xl border border-indigo-100 bg-gradient-to-br from-indigo-50/50 to-white shadow-sm space-y-3">
+                     <div className="flex items-center justify-between gap-3">
+                        <div className="min-w-0">
+                           <h4 className="text-sm font-black text-slate-900 flex items-center gap-1.5">
+                              ⚙️ พารามิเตอร์ก่อนการใช้งานเครื่อง (On-Use)
+                           </h4>
+                           <p className="text-[10px] text-slate-500 font-bold mt-0.5 leading-snug">
+                              หากกะนี้ไม่มีการใช้งานเครื่องนี้เลย สามารถกดปิดเพื่อยกเว้นการตรวจสอบส่วนนี้ได้
+                           </p>
+                        </div>
+                        <button
+                           type="button"
+                           onClick={() => setSkipOnUse(!skipOnUse)}
+                           className={cn(
+                              "px-3 py-2 rounded-xl font-bold text-xs border transition-all cursor-pointer active:scale-95 shadow-sm whitespace-nowrap shrink-0",
+                              skipOnUse 
+                                ? "bg-amber-500 border-amber-600 text-white hover:bg-amber-600 shadow-amber-500/10" 
+                                : "bg-white border-slate-200 text-slate-700 hover:bg-slate-50"
+                           )}
+                        >
+                           {skipOnUse ? "💤 ไม่มีการใช้งานเครื่อง" : "⚙️ มีการใช้งานเครื่อง"}
+                        </button>
+                     </div>
+                     {skipOnUse && (
+                        <div className="text-[10px] text-amber-800 bg-amber-50/70 p-2.5 rounded-xl border border-amber-200/50 font-bold leading-relaxed">
+                           💡 เลือก <b>"ไม่มีการใช้เครื่องนั้น"</b> แล้ว ระบบจะข้ามข้อกำหนดก่อนการผลิต และตรวจสอบเฉพาะพารามิเตอร์ประจำวันเท่านั้น สถานะการตรวจสอบจึงจะผ่านเป็น <b>"ครบ"</b> โดยสมบูรณ์แบบ
+                        </div>
+                     )}
+                  </div>
+                )}
 
                 {/* ZONE 2: รายการตรวจสอบพารามิเตอร์ (Validation Checklist Zone) */}
                 <div className="space-y-4">

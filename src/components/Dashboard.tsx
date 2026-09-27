@@ -7,7 +7,9 @@ import {
   updateCheckLog,
   fetchEquipmentLogs,
   updateEquipment,
-  saveCheckLog
+  saveCheckLog,
+  fetchOperators,
+  fetchTimeWindowSettings
 } from '../lib/db';
 import { format } from 'date-fns';
 import { 
@@ -34,7 +36,7 @@ import {
   Power
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Equipment, CheckLog, CheckItem } from '../types';
+import { Equipment, CheckLog, CheckItem, Operator, TimeWindowSettings } from '../types';
 import { cn } from '../lib/utils';
 
 export default function Dashboard({ selectedDept = 'all' }: { selectedDept?: string }) {
@@ -69,6 +71,19 @@ export default function Dashboard({ selectedDept = 'all' }: { selectedDept?: str
 
   const [dashboardDate, setDashboardDate] = useState<string>(format(new Date(), 'yyyy-MM-dd'));
   const [latestLogsByEq, setLatestLogsByEq] = useState<Record<string, CheckLog>>({});
+  const [activeTab, setActiveTab] = useState<'equipments' | 'shift_monitor'>('equipments');
+  const [operators, setOperators] = useState<Operator[]>([]);
+
+  const isLogIncomplete = (log: CheckLog, eqItems: CheckItem[]) => {
+    const isIdle = log.notes?.includes('ไม่ได้ใช้งาน') || log.notes?.includes('ติดทดสอบ');
+    if (isIdle) return false;
+    const relevantItems = log.skipOnUse 
+       ? eqItems.filter(item => !item.frequency || item.frequency === 'daily' || item.frequency === 'per-shift')
+       : eqItems;
+    const matchedIds = new Set();
+    log.responses.forEach(r => matchedIds.add(r.checkItemId));
+    return Math.max(0, relevantItems.length - matchedIds.size) > 0;
+  };
 
   const getShiftHistoryItems = () => {
     if (!historyEq) return [];
@@ -103,15 +118,7 @@ export default function Dashboard({ selectedDept = 'all' }: { selectedDept?: str
              operatorName = log.operatorName || 'ไม่ระบุ';
              
              if (!isIdle) {
-                const matchedIds = new Set();
-                eqItems.forEach(item => {
-                   const resp = log.responses.find(r => r.checkItemId === item.id || (r.itemName && r.itemName.toLowerCase() === item.name.toLowerCase()));
-                   if (resp) {
-                      matchedIds.add(item.id);
-                   }
-                });
-                const logPendingCount = Math.max(0, eqItems.length - matchedIds.size);
-                isIncomplete = logPendingCount > 0;
+                isIncomplete = isLogIncomplete(log, eqItems);
              }
           }
 
@@ -147,15 +154,7 @@ export default function Dashboard({ selectedDept = 'all' }: { selectedDept?: str
              operatorName = log.operatorName || 'ไม่ระบุ';
              
              if (!isIdle) {
-                const matchedIds = new Set();
-                eqItems.forEach(item => {
-                   const resp = log.responses.find(r => r.checkItemId === item.id || (r.itemName && r.itemName.toLowerCase() === item.name.toLowerCase()));
-                   if (resp) {
-                      matchedIds.add(item.id);
-                   }
-                });
-                const logPendingCount = Math.max(0, eqItems.length - matchedIds.size);
-                isIncomplete = logPendingCount > 0;
+                isIncomplete = isLogIncomplete(log, eqItems);
              }
           }
 
@@ -186,10 +185,11 @@ export default function Dashboard({ selectedDept = 'all' }: { selectedDept?: str
 
   const loadData = async (dateStr: string) => {
     setLoading(true);
-    let [eqData, dateLogsData, itemsData] = await Promise.all([
+    let [eqData, dateLogsData, itemsData, opData] = await Promise.all([
       fetchEquipments(),
       fetchLogs(dateStr),
-      fetchCheckItems()
+      fetchCheckItems(),
+      fetchOperators()
     ]);
 
     // Filter equipments by selectedDept if not 'all'
@@ -231,6 +231,7 @@ export default function Dashboard({ selectedDept = 'all' }: { selectedDept?: str
     setEquipments(eqData);
     setCheckItems(itemsData);
     setLogs(dateLogsData);
+    setOperators(opData);
     setLoading(false);
   };
 
@@ -498,8 +499,29 @@ export default function Dashboard({ selectedDept = 'all' }: { selectedDept?: str
         />
       </div>
 
-      {/* Smart Filter & Tracker Zone */}
-      <div className="shadow-sm border border-slate-200/60 rounded-3xl bg-white overflow-hidden p-6 md:p-8 relative">
+      {/* View Segmented Tabs */}
+      <div className="flex gap-2 p-1.5 bg-slate-100 rounded-2xl w-fit border border-slate-200/50 shadow-inner">
+         <button 
+           onClick={() => setActiveTab('equipments')}
+           className={cn("px-4 py-2 rounded-xl text-xs font-black transition-all cursor-pointer", 
+              activeTab === 'equipments' ? "bg-white text-indigo-950 shadow-sm border border-slate-200" : "text-slate-500 hover:text-slate-900"
+           )}
+         >
+           📦 สถานะเครื่องจักรรายข้อ (Equipment Tracker)
+         </button>
+         <button 
+           onClick={() => setActiveTab('shift_monitor')}
+           className={cn("px-4 py-2 rounded-xl text-xs font-black transition-all cursor-pointer flex items-center gap-1.5", 
+              activeTab === 'shift_monitor' ? "bg-white text-indigo-950 shadow-sm border border-slate-200" : "text-slate-500 hover:text-slate-900"
+           )}
+         >
+           📊 ศูนย์ควบคุมและประเมินประสิทธิภาพกะ (Shift Leader Monitor)
+         </button>
+      </div>
+
+      {activeTab === 'equipments' ? (
+         <>
+         <div className="shadow-sm border border-slate-200/60 rounded-3xl bg-white overflow-hidden p-6 md:p-8 relative">
          <div className="absolute top-0 right-0 w-[400px] h-[400px] bg-indigo-500/5 rounded-full blur-[100px] -translate-y-1/2 translate-x-1/3 pointer-events-none"></div>
          
          {/* Filter controls */}
@@ -543,7 +565,9 @@ export default function Dashboard({ selectedDept = 'all' }: { selectedDept?: str
             {filteredEquipments.map(eq => {
                const eqLogsToday = logs.filter(l => l.equipmentId === eq.id);
                const isMaint = eq.status === 'maintenance';
-               const isChecked = eqLogsToday.length > 0;
+                const eqItems = checkItems.filter(item => item.equipmentId === eq.id);
+                const hasIncomplete = eqLogsToday.some(l => isLogIncomplete(l, eqItems));
+                const isChecked = eqLogsToday.length > 0 && !hasIncomplete;
                const hasFailed = eqLogsToday.some(l => l.status === 'failed' || l.status === 'needs_attention');
 
                return (
@@ -571,9 +595,11 @@ export default function Dashboard({ selectedDept = 'all' }: { selectedDept?: str
                                ? "bg-red-50 border-red-200 text-red-600" 
                                : hasFailed
                                  ? "bg-rose-50 border-rose-200 text-rose-600"
-                                 : isChecked
-                                   ? "bg-emerald-50 border-emerald-200 text-emerald-700"
-                                   : "bg-amber-50 border-amber-200 text-amber-700"
+                                 : hasIncomplete
+                                   ? "bg-amber-50 border-amber-200 text-amber-600 font-bold"
+                                   : isChecked
+                                     ? "bg-emerald-50 border-emerald-200 text-emerald-700"
+                                     : "bg-amber-50 border-amber-200 text-amber-700"
                             )}>
                                {isMaint ? (
                                  <Wrench className="w-5 h-5 text-red-600" />
@@ -649,7 +675,7 @@ export default function Dashboard({ selectedDept = 'all' }: { selectedDept?: str
                                         className="px-2 py-1 rounded bg-amber-500 hover:bg-amber-600 text-white font-black text-[10px] border border-amber-600 shadow-sm transition-colors cursor-pointer"
                                         title="คลิกเพื่อบันทึกว่าเครื่องนี้ไม่ได้ใช้งาน หรือติดทำการทดสอบอยู่"
                                      >
-                                        ⏳ ค้างตรวจ (บิดสแตนบาย 💤)
+                                        ⏳ ค้างตรวจ (เซ็ตเครื่องติดทดสอบ 💤)
                                      </button>
                                   );
                                })()}
@@ -688,7 +714,7 @@ export default function Dashboard({ selectedDept = 'all' }: { selectedDept?: str
                                         className="px-2 py-1 rounded bg-amber-500 hover:bg-amber-600 text-white font-black text-[10px] border border-amber-600 shadow-sm transition-colors cursor-pointer"
                                         title="คลิกเพื่อบันทึกว่าเครื่องนี้ไม่ได้ใช้งาน หรือติดทำการทดสอบอยู่"
                                      >
-                                        ⏳ ค้างตรวจ (บิดสแตนบาย 💤)
+                                        ⏳ ค้างตรวจ (เซ็ตเครื่องติดทดสอบ 💤)
                                      </button>
                                   );
                                })()}
@@ -1086,6 +1112,324 @@ export default function Dashboard({ selectedDept = 'all' }: { selectedDept?: str
           </motion.div>
         )}
       </AnimatePresence>
+      </>
+      ) : (
+         /* SHIFT & KPI MONITOR PANEL */
+         <div className="space-y-6">
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+               {/* 1. DAY SHIFT KPI STATUS CARD */}
+               {(() => {
+                  const activeEqs = equipments.filter(e => e.status === 'active');
+                  const dayLeader = operators.find(op => op.role === 'shift_leader' && op.shift === 'DAY')?.name || 'Sarah Connor';
+                  const dayLogs = logs.filter(l => l.shift === 'DAY');
+                  const dayChecked = activeEqs.filter(eq => dayLogs.some(l => l.equipmentId === eq.id)).length;
+                  const dayPending = activeEqs.length - dayChecked;
+                  const dayLate = dayLogs.filter(l => l.isLate).length;
+                  
+                  const dayIncomplete = dayLogs.filter(l => {
+                     const isIdle = l.notes?.includes('ไม่ได้ใช้งาน') || l.notes?.includes('ติดทดสอบ');
+                     if (isIdle) return false;
+                     const eqItems = checkItems.filter(item => item.equipmentId === l.equipmentId);
+                     const matchedIds = new Set();
+                     l.responses.forEach(r => matchedIds.add(r.checkItemId));
+                     const relevantItems = l.skipOnUse 
+                        ? eqItems.filter(item => !item.frequency || item.frequency === 'daily' || item.frequency === 'per-shift')
+                        : eqItems;
+                     return Math.max(0, relevantItems.length - matchedIds.size) > 0;
+                  }).length;
+
+                  const isFullyChecked = dayChecked === activeEqs.length;
+                  const dayKpiStatus = !isFullyChecked 
+                     ? 'incomplete' 
+                     : (dayLate > 0 || dayIncomplete > 0) ? 'late' : 'perfect';
+
+                  return (
+                     <div className={cn(
+                        "rounded-3xl p-6 border transition-all relative overflow-hidden shadow-sm bg-white",
+                        dayKpiStatus === 'perfect' ? "border-emerald-200" :
+                        dayKpiStatus === 'late' ? "border-amber-200" : "border-red-200"
+                     )}>
+                        <div className="flex justify-between items-start mb-4">
+                           <div>
+                              <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Shift Performance Center</span>
+                              <h3 className="text-base font-black text-slate-800 flex items-center gap-1.5 mt-0.5">
+                                 🌞 กะกลางวัน (Day Shift)
+                              </h3>
+                              <p className="text-[10px] text-slate-400 font-bold font-mono">08:00 - 20:00 น.</p>
+                           </div>
+                           <span className={cn("px-2.5 py-1 rounded-full text-[10px] font-extrabold uppercase shadow-xs",
+                              dayKpiStatus === 'perfect' ? "bg-emerald-500 text-white" :
+                              dayKpiStatus === 'late' ? "bg-amber-500 text-white" : "bg-red-600 text-white"
+                           )}>
+                              {dayKpiStatus === 'perfect' ? '✓ ดีเยี่ยม (Perfect KPI)' :
+                               dayKpiStatus === 'late' ? '⚠️ มีการล่าช้า / ตรวจไม่ครบข้อ' : '❌ ค้างตรวจกะทำงาน'}
+                           </span>
+                        </div>
+
+                        {/* Shift Leader Info with accountability layout */}
+                        <div className="p-4 bg-slate-50 rounded-2xl border border-slate-200/50 flex justify-between items-center mb-5">
+                           <div className="flex items-center gap-2.5">
+                              <div className="w-10 h-10 bg-indigo-50 border border-indigo-100 rounded-xl flex items-center justify-center font-extrabold text-indigo-600 text-sm">
+                                 ⭐
+                              </div>
+                              <div>
+                                 <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider leading-none">Shift Leader ประจำกะ</p>
+                                 <p className="text-sm font-black text-slate-800 mt-1">{dayLeader}</p>
+                              </div>
+                           </div>
+                           <span className="px-2 py-0.5 text-[9px] font-black uppercase text-indigo-700 bg-indigo-50 border border-indigo-100 rounded">
+                              ผู้รับผิดชอบกะ
+                           </span>
+                        </div>
+
+                        {/* Stats Dashboard Grid */}
+                        <div className="grid grid-cols-4 gap-2">
+                           <div className="bg-slate-50 p-2.5 rounded-xl text-center border border-slate-100">
+                              <span className="block text-[9px] font-bold text-slate-400">ตรวจแล้ว</span>
+                              <span className="text-base font-black text-slate-800 font-mono">{dayChecked} <span className="text-[9px] font-normal">เครื่อง</span></span>
+                           </div>
+                           <div className="bg-slate-50 p-2.5 rounded-xl text-center border border-slate-100">
+                              <span className="block text-[9px] font-bold text-slate-400">ค้างตรวจ</span>
+                              <span className={cn("text-base font-black font-mono", dayPending > 0 ? "text-rose-600" : "text-slate-500")}>{dayPending} <span className="text-[9px] font-normal">เครื่อง</span></span>
+                           </div>
+                           <div className="bg-slate-50 p-2.5 rounded-xl text-center border border-slate-100">
+                              <span className="block text-[9px] font-bold text-slate-400">ตรวจล่าช้า</span>
+                              <span className={cn("text-base font-black font-mono", dayLate > 0 ? "text-amber-600" : "text-slate-500")}>{dayLate} <span className="text-[9px] font-normal">ข้อ</span></span>
+                           </div>
+                           <div className="bg-slate-50 p-2.5 rounded-xl text-center border border-slate-100">
+                              <span className="block text-[9px] font-bold text-slate-400">ค้างบางข้อ</span>
+                              <span className={cn("text-base font-black font-mono", dayIncomplete > 0 ? "text-amber-600" : "text-slate-500")}>{dayIncomplete} <span className="text-[9px] font-normal">เครื่อง</span></span>
+                           </div>
+                        </div>
+                     </div>
+                  );
+               })()}
+
+               {/* 2. NIGHT SHIFT KPI STATUS CARD */}
+               {(() => {
+                  const activeEqs = equipments.filter(e => e.status === 'active');
+                  const nightLeader = operators.find(op => op.role === 'shift_leader' && op.shift === 'NIGHT')?.name || 'Tony Stark';
+                  const nightLogs = logs.filter(l => l.shift === 'NIGHT');
+                  const nightChecked = activeEqs.filter(eq => nightLogs.some(l => l.equipmentId === eq.id)).length;
+                  const nightPending = activeEqs.length - nightChecked;
+                  const nightLate = nightLogs.filter(l => l.isLate).length;
+                  
+                  const nightIncomplete = nightLogs.filter(l => {
+                     const isIdle = l.notes?.includes('ไม่ได้ใช้งาน') || l.notes?.includes('ติดทดสอบ');
+                     if (isIdle) return false;
+                     const eqItems = checkItems.filter(item => item.equipmentId === l.equipmentId);
+                     const matchedIds = new Set();
+                     l.responses.forEach(r => matchedIds.add(r.checkItemId));
+                     const relevantItems = l.skipOnUse 
+                        ? eqItems.filter(item => !item.frequency || item.frequency === 'daily' || item.frequency === 'per-shift')
+                        : eqItems;
+                     return Math.max(0, relevantItems.length - matchedIds.size) > 0;
+                  }).length;
+
+                  const isFullyChecked = nightChecked === activeEqs.length;
+                  const nightKpiStatus = !isFullyChecked 
+                     ? 'incomplete' 
+                     : (nightLate > 0 || nightIncomplete > 0) ? 'late' : 'perfect';
+
+                  return (
+                     <div className={cn(
+                        "rounded-3xl p-6 border transition-all relative overflow-hidden shadow-sm bg-white",
+                        nightKpiStatus === 'perfect' ? "border-emerald-200" :
+                        nightKpiStatus === 'late' ? "border-amber-200" : "border-red-200"
+                     )}>
+                        <div className="flex justify-between items-start mb-4">
+                           <div>
+                              <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Shift Performance Center</span>
+                              <h3 className="text-base font-black text-slate-800 flex items-center gap-1.5 mt-0.5">
+                                 🌙 กะกลางคืน (Night Shift)
+                              </h3>
+                              <p className="text-[10px] text-slate-400 font-bold font-mono">20:00 - 08:00 น.</p>
+                           </div>
+                           <span className={cn("px-2.5 py-1 rounded-full text-[10px] font-extrabold uppercase shadow-xs",
+                              nightKpiStatus === 'perfect' ? "bg-emerald-500 text-white" :
+                              nightKpiStatus === 'late' ? "bg-amber-500 text-white" : "bg-red-600 text-white"
+                           )}>
+                              {nightKpiStatus === 'perfect' ? '✓ ดีเยี่ยม (Perfect KPI)' :
+                               nightKpiStatus === 'late' ? '⚠️ มีการล่าช้า / ตรวจไม่ครบข้อ' : '❌ ค้างตรวจกะทำงาน'}
+                           </span>
+                        </div>
+
+                        {/* Shift Leader Info with accountability layout */}
+                        <div className="p-4 bg-slate-50 rounded-2xl border border-slate-200/50 flex justify-between items-center mb-5">
+                           <div className="flex items-center gap-2.5">
+                              <div className="w-10 h-10 bg-indigo-50 border border-indigo-100 rounded-xl flex items-center justify-center font-extrabold text-indigo-600 text-sm">
+                                 ⭐
+                              </div>
+                              <div>
+                                 <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider leading-none">Shift Leader ประจำกะ</p>
+                                 <p className="text-sm font-black text-slate-800 mt-1">{nightLeader}</p>
+                              </div>
+                           </div>
+                           <span className="px-2 py-0.5 text-[9px] font-black uppercase text-indigo-700 bg-indigo-50 border border-indigo-100 rounded">
+                              ผู้รับผิดชอบกะ
+                           </span>
+                        </div>
+
+                        {/* Stats Dashboard Grid */}
+                        <div className="grid grid-cols-4 gap-2">
+                           <div className="bg-slate-50 p-2.5 rounded-xl text-center border border-slate-100">
+                              <span className="block text-[9px] font-bold text-slate-400">ตรวจแล้ว</span>
+                              <span className="text-base font-black text-slate-800 font-mono">{nightChecked} <span className="text-[9px] font-normal">เครื่อง</span></span>
+                           </div>
+                           <div className="bg-slate-50 p-2.5 rounded-xl text-center border border-slate-100">
+                              <span className="block text-[9px] font-bold text-slate-400">ค้างตรวจ</span>
+                              <span className={cn("text-base font-black font-mono", nightPending > 0 ? "text-rose-600" : "text-slate-500")}>{nightPending} <span className="text-[9px] font-normal">เครื่อง</span></span>
+                           </div>
+                           <div className="bg-slate-50 p-2.5 rounded-xl text-center border border-slate-100">
+                              <span className="block text-[9px] font-bold text-slate-400">ตรวจล่าช้า</span>
+                              <span className={cn("text-base font-black font-mono", nightLate > 0 ? "text-amber-600" : "text-slate-500")}>{nightLate} <span className="text-[9px] font-normal">ข้อ</span></span>
+                           </div>
+                           <div className="bg-slate-50 p-2.5 rounded-xl text-center border border-slate-100">
+                              <span className="block text-[9px] font-bold text-slate-400">ค้างบางข้อ</span>
+                              <span className={cn("text-base font-black font-mono", nightIncomplete > 0 ? "text-amber-600" : "text-slate-500")}>{nightIncomplete} <span className="text-[9px] font-normal">เครื่อง</span></span>
+                           </div>
+                        </div>
+                     </div>
+                  );
+               })()}
+            </div>
+
+            {/* 3. SHIFT INSPECTION MONITOR DETAIL TABLE */}
+            <div className="bg-white border border-slate-200 rounded-3xl p-6 sm:p-8 space-y-4 shadow-sm">
+               <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-2 border-b border-slate-100 pb-4">
+                  <div>
+                     <h3 className="text-base font-black text-slate-800">📋 ตารางวิเคราะห์คุณภาพการตรวจสอบรายข้อในกะทำงาน</h3>
+                     <p className="text-xs text-slate-400 font-medium">รายการเครื่องจักรทั้งหมด และสถานะประเมินประสิทธิภาพกะ (KPI & Late Logs Analysis)</p>
+                  </div>
+               </div>
+
+               <div className="overflow-x-auto">
+                  <table className="w-full text-left text-xs border-collapse">
+                     <thead>
+                        <tr className="border-b border-slate-100 text-slate-400 font-bold uppercase tracking-wider text-[10px]">
+                           <th className="py-3 px-2">รหัส / อุปกรณ์</th>
+                           <th className="py-3 px-2">🌞 กะเช้า (DAY)</th>
+                           <th className="py-3 px-2">เวลาบันทึก (เช้า)</th>
+                           <th className="py-3 px-2">🌙 กะดึก (NIGHT)</th>
+                           <th className="py-3 px-2">เวลาบันทึก (ดึก)</th>
+                        </tr>
+                     </thead>
+                     <tbody className="divide-y divide-slate-100 font-medium text-slate-800">
+                        {equipments.filter(e => e.status === 'active').map(eq => {
+                           const dayLog = logs.find(l => l.equipmentId === eq.id && l.shift === 'DAY');
+                           const nightLog = logs.find(l => l.equipmentId === eq.id && l.shift === 'NIGHT');
+
+                           // Day shift logs metrics
+                           let dayStatusText = "⏳ ค้างตรวจ";
+                           let dayStatusColor = "bg-red-50 text-red-700 border border-red-200";
+                           let dayTimeStr = "-";
+                           
+                           if (dayLog) {
+                              const isIdle = dayLog.notes?.includes('ไม่ได้ใช้งาน') || dayLog.notes?.includes('ติดทดสอบ');
+                              if (isIdle) {
+                                 dayStatusText = "💤 สแตนบาย";
+                                 dayStatusColor = "bg-sky-50 text-sky-700 border border-sky-200";
+                              } else {
+                                 const eqItems = checkItems.filter(item => item.equipmentId === eq.id);
+                                 const matchedIds = new Set();
+                                 dayLog.responses.forEach(r => matchedIds.add(r.checkItemId));
+                                 const relevantItems = dayLog.skipOnUse 
+                                    ? eqItems.filter(item => !item.frequency || item.frequency === 'daily' || item.frequency === 'per-shift')
+                                    : eqItems;
+                                 const isInc = Math.max(0, relevantItems.length - matchedIds.size) > 0;
+                                 
+                                 if (isInc) {
+                                    dayStatusText = "⚠️ ตรวจไม่ครบ";
+                                    dayStatusColor = "bg-amber-50 text-amber-700 border border-amber-200";
+                                 } else {
+                                    dayStatusText = "✓ ตรวจครบ";
+                                    dayStatusColor = "bg-emerald-50 text-emerald-700 border border-emerald-200";
+                                 }
+                              }
+                              dayTimeStr = format(dayLog.timestamp, 'HH:mm น.');
+                              if (dayLog.isLate) {
+                                 dayTimeStr += " (ช้า ⏳)";
+                              }
+                           }
+
+                           // Night shift logs metrics
+                           let nightStatusText = "⏳ ค้างตรวจ";
+                           let nightStatusColor = "bg-red-50 text-red-700 border border-red-200";
+                           let nightTimeStr = "-";
+                           
+                           if (nightLog) {
+                              const isIdle = nightLog.notes?.includes('ไม่ได้ใช้งาน') || nightLog.notes?.includes('ติดทดสอบ');
+                              if (isIdle) {
+                                 nightStatusText = "💤 สแตนบาย";
+                                 nightStatusColor = "bg-sky-50 text-sky-700 border border-sky-200";
+                              } else {
+                                 const eqItems = checkItems.filter(item => item.equipmentId === eq.id);
+                                 const matchedIds = new Set();
+                                 nightLog.responses.forEach(r => matchedIds.add(r.checkItemId));
+                                 const relevantItems = nightLog.skipOnUse 
+                                    ? eqItems.filter(item => !item.frequency || item.frequency === 'daily' || item.frequency === 'per-shift')
+                                    : eqItems;
+                                 const isInc = Math.max(0, relevantItems.length - matchedIds.size) > 0;
+                                 
+                                 if (isInc) {
+                                    nightStatusText = "⚠️ ตรวจไม่ครบ";
+                                    nightStatusColor = "bg-amber-50 text-amber-700 border border-amber-200";
+                                 } else {
+                                    nightStatusText = "✓ ตรวจครบ";
+                                    nightStatusColor = "bg-emerald-50 text-emerald-700 border border-emerald-200";
+                                 }
+                              }
+                              nightTimeStr = format(nightLog.timestamp, 'HH:mm น.');
+                              if (nightLog.isLate) {
+                                 nightTimeStr += " (ช้า ⏳)";
+                              }
+                           }
+
+                           return (
+                              <tr key={eq.id} className="hover:bg-slate-50 transition-colors">
+                                 <td className="py-3 px-2">
+                                    <p className="font-bold text-slate-800">{eq.name}</p>
+                                    <p className="text-[10px] text-slate-400 font-mono mt-0.5">{eq.code} · {eq.location}</p>
+                                 </td>
+                                 <td className="py-3 px-2">
+                                    <span className={cn("px-2 py-0.5 rounded text-[10px] font-black", dayStatusColor)}>
+                                       {dayStatusText}
+                                    </span>
+                                 </td>
+                                 <td className="py-3 px-2 font-mono text-[10px] text-slate-500">
+                                    {dayLog ? (
+                                       <div>
+                                          <p className="font-bold text-slate-700">{dayTimeStr}</p>
+                                          <p className="text-[8px] text-slate-400">ผู้ตรวจ: {dayLog.operatorName.split(' ')[0]}</p>
+                                       </div>
+                                    ) : (
+                                       <span className="text-rose-500 font-black">⏳ ค้างตรวจ</span>
+                                    )}
+                                 </td>
+                                 <td className="py-3 px-2">
+                                    <span className={cn("px-2 py-0.5 rounded text-[10px] font-black", nightStatusColor)}>
+                                       {nightStatusText}
+                                    </span>
+                                 </td>
+                                 <td className="py-3 px-2 font-mono text-[10px] text-slate-500">
+                                    {nightLog ? (
+                                       <div>
+                                          <p className="font-bold text-slate-700">{nightTimeStr}</p>
+                                          <p className="text-[8px] text-slate-400">ผู้ตรวจ: {nightLog.operatorName.split(' ')[0]}</p>
+                                       </div>
+                                    ) : (
+                                       <span className="text-rose-500 font-black">⏳ ค้างตรวจ</span>
+                                    )}
+                                 </td>
+                              </tr>
+                           );
+                        })}
+                     </tbody>
+                  </table>
+               </div>
+            </div>
+         </div>
+      )}
     </div>
   );
 }

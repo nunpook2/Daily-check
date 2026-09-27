@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { fetchEquipments, fetchCheckItems, addEquipment, deleteEquipment, updateEquipment, addCheckItem, deleteCheckItem, updateCheckItem, fetchOperators, addOperator, deleteOperator, updateOperator } from '../lib/db';
-import { Equipment, CheckItem, Operator } from '../types';
+import { fetchEquipments, fetchCheckItems, addEquipment, deleteEquipment, updateEquipment, addCheckItem, deleteCheckItem, updateCheckItem, fetchOperators, addOperator, deleteOperator, updateOperator, fetchTimeWindowSettings, saveTimeWindowSettings } from '../lib/db';
+import { Equipment, CheckItem, Operator, TimeWindowSettings } from '../types';
 import { Plus, Settings2, Users, MonitorSmartphone, QrCode, X, ListChecks, Info, Trash2, Edit2 } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { motion, AnimatePresence } from 'motion/react';
@@ -189,6 +189,13 @@ export default function Settings() {
   const [equipments, setEquipments] = useState<Equipment[]>([]);
   const [checkItems, setCheckItems] = useState<CheckItem[]>([]);
   const [operators, setOperators] = useState<Operator[]>([]);
+  const [newOpRole, setNewOpRole] = useState<'operator' | 'shift_leader'>('operator');
+  const [newOpShift, setNewOpShift] = useState<'DAY' | 'NIGHT'>('DAY');
+
+  const [dayStart, setDayStart] = useState('08:00');
+  const [dayEnd, setDayEnd] = useState('10:00');
+  const [nightStart, setNightStart] = useState('20:00');
+  const [nightEnd, setNightEnd] = useState('22:00');
   
   // Modal state
   const [qrModalEq, setQrModalEq] = useState<Equipment | null>(null);
@@ -301,7 +308,9 @@ export default function Settings() {
     await addOperator({
       name: newOpName,
       employeeId: newOpId,
-      isActive: true
+      isActive: true,
+      role: newOpRole,
+      shift: newOpShift
     });
     setNewOpName(''); setNewOpId('');
     await loadData();
@@ -310,6 +319,8 @@ export default function Settings() {
   const [confirmDeleteOpId, setConfirmDeleteOpId] = useState<string | null>(null);
   const [editingOpId, setEditingOpId] = useState<string | null>(null);
   const [editingOpName, setEditingOpName] = useState<string>('');
+  const [editingOpRole, setEditingOpRole] = useState<'operator' | 'shift_leader'>('operator');
+  const [editingOpShift, setEditingOpShift] = useState<'DAY' | 'NIGHT'>('DAY');
 
   const handleDeleteOperator = async (id: string) => {
     if (confirmDeleteOpId === id) {
@@ -324,11 +335,28 @@ export default function Settings() {
   const handleEditOperator = (op: Operator) => {
     setEditingOpId(op.id!);
     setEditingOpName(op.name);
+    setEditingOpRole(op.role || 'operator');
+    setEditingOpShift(op.shift || 'DAY');
+  };
+
+  const handleSaveTimeWindows = (e: React.FormEvent) => {
+    e.preventDefault();
+    saveTimeWindowSettings({
+      dayStart,
+      dayEnd,
+      nightStart,
+      nightEnd
+    });
+    alert('💾 บันทึกการตั้งค่ารอบเวลาตรวจเช็กค่าควบคุมประจำกะ สำเร็จ!');
   };
 
   const submitEditOperator = async (id: string) => {
     if (editingOpName) {
-      await updateOperator(id, editingOpName);
+      await updateOperator(id, {
+        name: editingOpName,
+        role: editingOpRole,
+        shift: editingOpShift
+      });
       setEditingOpId(null);
       await loadData();
     }
@@ -423,12 +451,73 @@ export default function Settings() {
                     <input type="text" required value={newOpId} onChange={e => setNewOpId(e.target.value)}
                            className="w-full px-3 py-2 border border-slate-200 rounded-lg focus:ring-2 focus:ring-indigo-500" />
                  </div>
+                 <div className="grid grid-cols-2 gap-3">
+                    <div>
+                       <label className="block text-xs font-bold text-slate-700 mb-1">ตำแหน่ง (Position / Role)</label>
+                       <select 
+                          value={newOpRole} 
+                          onChange={e => setNewOpRole(e.target.value as any)}
+                          className="w-full px-3 py-2 border border-slate-200 rounded-lg focus:ring-2 focus:ring-indigo-500 bg-white text-xs font-medium"
+                       >
+                          <option value="operator">ผู้ปฏิบัติงาน (Operator)</option>
+                          <option value="shift_leader">หัวหน้ากะ (Shift Leader)</option>
+                       </select>
+                    </div>
+                    <div>
+                       <label className="block text-xs font-bold text-slate-700 mb-1">กะการทำงาน (Shift)</label>
+                       <select 
+                          value={newOpShift} 
+                          onChange={e => setNewOpShift(e.target.value as any)}
+                          className="w-full px-3 py-2 border border-slate-200 rounded-lg focus:ring-2 focus:ring-indigo-500 bg-white text-xs font-medium"
+                       >
+                          <option value="DAY">กะเช้า (DAY)</option>
+                          <option value="NIGHT">กะดึก (NIGHT)</option>
+                       </select>
+                    </div>
+                 </div>
                  <button type="submit" className="flex items-center gap-2 px-4 py-2 bg-slate-900 text-white rounded-lg hover:bg-slate-800">
                     <Plus className="w-4 h-4" /> Add Operator
                  </button>
               </form>
             </div>
             
+            {/* Time Window Settings panel inside Settings operators tab */}
+            <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-4 sm:p-6 space-y-4 h-fit md:col-span-1">
+              <h2 className="text-lg font-semibold text-slate-900 border-b border-slate-100 pb-2">⏰ ตั้งค่ารอบเวลาตรวจสอบประจำกะ</h2>
+              <form onSubmit={handleSaveTimeWindows} className="space-y-4">
+                  <p className="text-[11px] text-slate-400 font-bold leading-relaxed">
+                     กำหนดช่วงเวลาที่อนุญาตสำหรับการตรวจสอบประจำรอบ หากผู้ปฏิบัติงานสแกนส่งผลนอกช่วงเวลานี้ ระบบจะขึ้นสถานะ "ตรวจช้า" เพื่อติดตามประเมินผลประสิทธิภาพการทำงานในกะ
+                  </p>
+                  <div className="grid grid-cols-2 gap-3">
+                     <div>
+                        <label className="block text-[11px] font-black text-slate-700 mb-1">🌞 กะเช้า เริ่ม (Day Start)</label>
+                        <input type="time" required value={dayStart} onChange={e => setDayStart(e.target.value)}
+                               className="w-full px-3 py-2 border border-slate-200 rounded-lg text-xs font-bold" />
+                     </div>
+                     <div>
+                        <label className="block text-[11px] font-black text-slate-700 mb-1">🌞 กะเช้า สิ้นสุด (Day End)</label>
+                        <input type="time" required value={dayEnd} onChange={e => setDayEnd(e.target.value)}
+                               className="w-full px-3 py-2 border border-slate-200 rounded-lg text-xs font-bold" />
+                     </div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-3">
+                     <div>
+                        <label className="block text-[11px] font-black text-slate-700 mb-1">🌙 กะดึก เริ่ม (Night Start)</label>
+                        <input type="time" required value={nightStart} onChange={e => setNightStart(e.target.value)}
+                               className="w-full px-3 py-2 border border-slate-200 rounded-lg text-xs font-bold" />
+                     </div>
+                     <div>
+                        <label className="block text-[11px] font-black text-slate-700 mb-1">🌙 กะดึก สิ้นสุด (Night End)</label>
+                        <input type="time" required value={nightEnd} onChange={e => setNightEnd(e.target.value)}
+                               className="w-full px-3 py-2 border border-slate-200 rounded-lg text-xs font-bold" />
+                     </div>
+                  </div>
+                  <button type="submit" className="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-indigo-600 text-white font-bold rounded-lg hover:bg-indigo-700 transition-colors text-xs cursor-pointer shadow-xs">
+                     บันทึกเกณฑ์รอบเวลาตรวจ
+                  </button>
+              </form>
+            </div>
+
             <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-4 sm:p-6 space-y-4">
               <h2 className="text-lg font-semibold text-slate-900 border-b border-slate-100 pb-2">Operator Roster</h2>
               <ul className="divide-y divide-slate-100">
@@ -436,24 +525,67 @@ export default function Settings() {
                   <li key={op.id} className="py-3 flex justify-between items-center group">
                     <div className="flex-1">
                        {editingOpId === op.id ? (
-                          <input 
-                            type="text" 
-                            className="w-full max-w-xs px-2 py-1 text-sm border border-indigo-300 rounded focus:outline-none focus:ring-1 focus:ring-indigo-500"
-                            value={editingOpName}
-                            onChange={(e) => setEditingOpName(e.target.value)}
-                            onKeyDown={(e) => { if (e.key === 'Enter') submitEditOperator(op.id!); else if (e.key === 'Escape') setEditingOpId(null); }}
-                            autoFocus
-                          />
+                          <div className="space-y-3 max-w-xs pr-4">
+                             <div>
+                                <label className="block text-[10px] font-black text-slate-500 uppercase mb-1">ชื่อพนักงาน</label>
+                                <input 
+                                  type="text" 
+                                  className="w-full px-2.5 py-1.5 text-xs border border-slate-200 rounded focus:border-indigo-500 bg-white font-medium"
+                                  value={editingOpName}
+                                  onChange={(e) => setEditingOpName(e.target.value)}
+                                  autoFocus
+                                />
+                             </div>
+                             <div className="grid grid-cols-2 gap-2">
+                                <div>
+                                   <label className="block text-[10px] font-black text-slate-500 uppercase mb-1">ตำแหน่ง</label>
+                                   <select
+                                      value={editingOpRole}
+                                      onChange={e => setEditingOpRole(e.target.value as any)}
+                                      className="w-full px-2.5 py-1.5 text-xs border border-slate-200 rounded bg-white font-semibold"
+                                   >
+                                      <option value="operator">Operator</option>
+                                      <option value="shift_leader">Shift Leader</option>
+                                   </select>
+                                </div>
+                                <div>
+                                   <label className="block text-[10px] font-black text-slate-500 uppercase mb-1">กะทำงาน</label>
+                                   <select
+                                      value={editingOpShift}
+                                      onChange={e => setEditingOpShift(e.target.value as any)}
+                                      className="w-full px-2.5 py-1.5 text-xs border border-slate-200 rounded bg-white font-semibold"
+                                   >
+                                      <option value="DAY">DAY (เช้า)</option>
+                                      <option value="NIGHT">NIGHT (ดึก)</option>
+                                   </select>
+                                </div>
+                             </div>
+                          </div>
                        ) : (
-                          <>
-                             <p className="font-medium text-slate-900">{op.name}</p>
-                             <p className="text-xs text-slate-500">{op.employeeId}</p>
-                          </>
+                          <div>
+                             <p className="font-black text-slate-900 text-sm flex flex-wrap items-center gap-2">
+                                {op.name}
+                                <span className={cn("px-2 py-0.5 rounded text-[9px] font-extrabold uppercase", 
+                                   op.role === 'shift_leader' ? "bg-purple-100 text-purple-800 border border-purple-200" : "bg-slate-100 text-slate-700 border border-slate-200"
+                                )}>
+                                   {op.role === 'shift_leader' ? '⭐ Shift Leader' : 'Operator'}
+                                </span>
+                                <span className={cn("px-2 py-0.5 rounded text-[9px] font-extrabold uppercase", 
+                                   op.shift === 'NIGHT' ? "bg-indigo-50 text-indigo-700 border border-indigo-150" : "bg-amber-50 text-amber-700 border border-amber-150"
+                                )}>
+                                   {op.shift === 'NIGHT' ? '🌙 กะดึก' : '🌞 กะเช้า'}
+                                </span>
+                             </p>
+                             <p className="text-xs text-slate-500 font-mono mt-0.5 font-bold">รหัส: {op.employeeId}</p>
+                          </div>
                        )}
                     </div>
                     <div className="flex gap-2 items-center">
                        {editingOpId === op.id ? (
-                          <button onClick={() => submitEditOperator(op.id!)} className="px-3 py-1 text-xs font-bold text-white bg-indigo-600 rounded">Save</button>
+                          <div className="flex flex-col sm:flex-row gap-1">
+                             <button onClick={() => submitEditOperator(op.id!)} className="px-3 py-1.5 text-xs font-bold text-white bg-indigo-600 rounded-lg hover:bg-indigo-700 transition-colors shadow-xs">Save</button>
+                             <button onClick={() => setEditingOpId(null)} className="px-3 py-1.5 text-xs font-bold text-slate-600 bg-slate-100 rounded-lg hover:bg-slate-200 transition-colors">Cancel</button>
+                          </div>
                        ) : confirmDeleteOpId === op.id ? (
                           <>
                              <span className="text-xs font-semibold text-rose-500">Confirm Delete?</span>

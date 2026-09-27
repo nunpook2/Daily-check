@@ -12,7 +12,7 @@ import {
   deleteField
 } from "firebase/firestore";
 import { db } from "./firebase";
-import { Equipment, CheckItem, CheckLog, Operator } from "../types";
+import { Equipment, CheckItem, CheckLog, Operator, TimeWindowSettings } from "../types";
 import { format } from "date-fns";
 
 // Mock Fallback in case of Firebase Permission issues (ensures demo always works for CEO)
@@ -70,8 +70,10 @@ let mockLogs: CheckLog[] = getLocalStorage('lab_logs', [
 ]);
 
 let mockOperators: Operator[] = getLocalStorage('lab_operators', [
-  { id: 'o1', name: 'Sarah Connor', employeeId: 'SC-101', isActive: true },
-  { id: 'o2', name: 'John Doe', employeeId: 'JD-102', isActive: true },
+  { id: 'o1', name: 'Sarah Connor', employeeId: 'SC-101', isActive: true, role: 'shift_leader', shift: 'DAY' },
+  { id: 'o2', name: 'John Doe', employeeId: 'JD-102', isActive: true, role: 'operator', shift: 'DAY' },
+  { id: 'o3', name: 'Tony Stark', employeeId: 'TS-303', isActive: true, role: 'shift_leader', shift: 'NIGHT' },
+  { id: 'o4', name: 'Bruce Banner', employeeId: 'BB-404', isActive: true, role: 'operator', shift: 'NIGHT' },
 ]);
 
 export async function fetchEquipments(): Promise<Equipment[]> {
@@ -248,14 +250,14 @@ export async function deleteOperator(id: string): Promise<void> {
   setLocalStorage('lab_operators', mockOperators);
 }
 
-export async function updateOperator(id: string, name: string): Promise<void> {
+export async function updateOperator(id: string, updates: Partial<Operator>): Promise<void> {
   try {
-    await updateDoc(doc(db, "operators", id), { name });
+    await updateDoc(doc(db, "operators", id), updates);
   } catch (error) {
     console.warn("Firestore update failed, using local mock.", error);
   }
   const m = mockOperators.find(o => o.id === id);
-  if (m) m.name = name;
+  if (m) Object.assign(m, updates);
   setLocalStorage('lab_operators', mockOperators);
 }
 
@@ -377,10 +379,10 @@ export async function seedDummyData() {
     batch.set(hplc4Ref, { equipmentId: eq2Ref.id, category: 'ตรวจสอบความพร้อมของเครื่องมือ (ทำก่อนทดสอบ)', name: 'No Leakage', criteriaText: 'ไม่มีการรั่วซึมตามข้อต่อ', type: 'boolean', expectedBoolean: true, isRequired: true, orderIndex: 4, frequency: 'on-use' });
 
     const op1Ref = doc(collection(db, "operators"));
-    batch.set(op1Ref, { name: 'Sarah Connor', employeeId: 'SC-101', isActive: true });
+    batch.set(op1Ref, { name: 'Sarah Connor', employeeId: 'SC-101', isActive: true, role: 'shift_leader', shift: 'DAY' });
 
     const op2Ref = doc(collection(db, "operators"));
-    batch.set(op2Ref, { name: 'John Doe', employeeId: 'JD-102', isActive: true });
+    batch.set(op2Ref, { name: 'John Doe', employeeId: 'JD-102', isActive: true, role: 'operator', shift: 'DAY' });
 
     await batch.commit();
     return true;
@@ -388,4 +390,19 @@ export async function seedDummyData() {
     console.error("Seed failed:", error);
     return false;
   }
+}
+
+const defaultTimeWindow: TimeWindowSettings = {
+  dayStart: '08:00',
+  dayEnd: '10:00',
+  nightStart: '20:00',
+  nightEnd: '22:00'
+};
+
+export function fetchTimeWindowSettings(): TimeWindowSettings {
+  return getLocalStorage('time_window_settings', defaultTimeWindow);
+}
+
+export function saveTimeWindowSettings(settings: TimeWindowSettings): void {
+  setLocalStorage('time_window_settings', settings);
 }

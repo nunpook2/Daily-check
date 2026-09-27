@@ -42,6 +42,8 @@ export interface Operator {
   name: string;
   employeeId: string;
   isActive: boolean;
+  role: 'operator' | 'shift_leader';
+  shift: 'DAY' | 'NIGHT';
 }
 
 export interface CheckLog {
@@ -57,6 +59,15 @@ export interface CheckLog {
   actionTaken?: string;
   notes?: string;
   responses: CheckResponse[];
+  isLate?: boolean;
+  skipOnUse?: boolean;
+}
+
+export interface TimeWindowSettings {
+  dayStart: string; // e.g. "08:00"
+  dayEnd: string;   // e.g. "10:00"
+  nightStart: string; // e.g. "20:00"
+  nightEnd: string;   // e.g. "22:00"
 }
 
 export interface CheckResponse {
