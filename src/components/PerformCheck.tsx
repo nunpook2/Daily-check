@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { fetchEquipments, fetchCheckItems, fetchLogs, saveCheckLog, fetchOperators, fetchTimeWindowSettings } from '../lib/db';
 import { Equipment, CheckItem, CheckResponse, Operator, TimeWindowSettings } from '../types';
-import { format } from 'date-fns';
+import { format, differenceInCalendarDays } from 'date-fns';
 import { 
   ChevronRight, 
   ArrowLeft, 
@@ -50,20 +50,26 @@ export default function PerformCheck({ onSaved, initialEqCode, selectedDept = 'a
   const [items, setItems] = useState<CheckItem[]>([]);
   const [responses, setResponses] = useState<Record<string, any>>({});
   const [operatorId, setOperatorId] = useState('');
-  const [shift, setShift] = useState<'DAY' | 'NIGHT' | 'OTHER' | 'NA'>('DAY');
+  const [shift, setShift] = useState<'DAY' | 'NIGHT'>('DAY');
   const [checkType, setCheckType] = useState<string>('all');
   const [notes, setNotes] = useState('');
-  const [skipOnUse, setSkipOnUse] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [standbyMode, setStandbyMode] = useState<'active' | 'testing' | 'unused'>('active');
+  const [activeItemId, setActiveItemId] = useState<string | null>(null);
+
+  const categoryOrder = useMemo(() => {
+    return Array.from(new Set(items.map(i => i.category || 'General Checklist')));
+  }, [items]);
 
   const filteredItems = useMemo(() => {
+    const shouldSkipOnUse = standbyMode === 'testing' || standbyMode === 'unused';
     return items.filter(item => {
-      if (skipOnUse && item.frequency === 'on-use') return false;
+      if (shouldSkipOnUse && item.frequency === 'on-use') return false;
       if (checkType === 'all') return true;
       if (checkType === 'daily' && (!item.frequency || item.frequency === 'daily')) return true;
       return item.frequency === checkType;
     });
-  }, [items, checkType, skipOnUse]);
+  }, [items, checkType, standbyMode]);
 
   const hasOnUseItems = useMemo(() => {
     return items.some(item => item.frequency === 'on-use');
@@ -283,6 +289,7 @@ export default function PerformCheck({ onSaved, initialEqCode, selectedDept = 'a
     setOperatorId('');
     setShift('DAY');
     setNotes('');
+    setStandbyMode('active');
   };
 
   const evalIsNormal = (item: CheckItem, value: any): boolean => {
@@ -307,7 +314,7 @@ export default function PerformCheck({ onSaved, initialEqCode, selectedDept = 'a
       return;
     }
 
-    const confirmSet = window.confirm(`คุณต้องการบันทึกว่าเครื่อง "${selectedEq.name}" (${selectedEq.code}) ในกะ ${shift === 'DAY' ? 'กลางวัน' : shift === 'NIGHT' ? 'กลางคืน' : 'พิเศษ'} เป็น "ไม่ได้ใช้งาน / เครื่องติดทดสอบ" ใช่หรือไม่?\n\n(ระบบจะบันทึกสถานะให้ทันที เพื่อยืนยันว่าคุณเดินมาตรวจสอบแล้ว และจะไม่ขึ้นค้างตรวจในกะนี้)`);
+    const confirmSet = window.confirm(`คุณต้องการบันทึกว่าเครื่อง "${selectedEq.name}" (${selectedEq.code}) ในกะ ${shift === 'DAY' ? 'กลางวัน' : 'กลางคืน'} เป็น "ไม่ได้ใช้งาน / เครื่องติดทดสอบ" ใช่หรือไม่?\n\n(ระบบจะบันทึกสถานะให้ทันที เพื่อยืนยันว่าคุณเดินมาตรวจสอบแล้ว และจะไม่ขึ้นค้างตรวจในกะนี้)`);
     if (!confirmSet) return;
 
     setSaving(true);
@@ -356,92 +363,124 @@ export default function PerformCheck({ onSaved, initialEqCode, selectedDept = 'a
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!selectedEq || !operatorId) return;
-
-    // Validate that all required items are answered
-    const unansweredItem = filteredItems.find(item => item.isRequired && (responses[item.id!] === undefined || responses[item.id!] === ''));
-    if (unansweredItem) {
-      alert(`⚠️ กรุณาทำรายการตรวจหรือระบุค่าสำหรับข้อ: "${unansweredItem.name}" ก่อนส่งบันทึก`);
+    if (!selectedEq || !operatorId) {
+      alert("⚠️ กรุณาเลือกพนักงานผู้รับผิดชอบตรวจเช็กในโซนที่ 1 ก่อน");
       return;
     }
 
     setSaving(true);
-    let allNormal = true;
-    const finalResponses: CheckResponse[] = filteredItems.map(item => {
-       const val = responses[item.id!];
-       const normal = evalIsNormal(item, val);
-       if (!normal) allNormal = false;
-       
-       const resp: any = {
-         checkItemId: item.id,
-         type: item.type,
-         itemName: item.name,
-         isNormal: normal
-       };
-       if (item.type === 'boolean') {
-           resp.valueBoolean = val === 'true' || val === true;
-       } else if (item.type === 'numeric') {
-           resp.valueNumeric = Number(val);
-       }
-       return resp;
-    });
+    try {
+      const op = operators.find(o => o.employeeId === operatorId);
+      const opName = op ? op.name : operatorId;
 
-    const logStatus = allNormal ? 'passed' : 'needs_attention';
-    const computedNotes = notes ? notes : (allNormal ? 'ทุกรายการปกติ' : 'พบรายการตกเกณฑ์หรือหลุดค่าควบคุมมาตรฐาน');
-
-    const op = operators.find(o => o.employeeId === operatorId);
-    const opName = op ? op.name : operatorId;
-
-    const checkIfLate = (shiftVal: string, timestamp: number) => {
-      const tw = fetchTimeWindowSettings();
-      const date = new Date(timestamp);
-      const hrs = date.getHours();
-      const mins = date.getMinutes();
-      const timeValue = hrs * 60 + mins;
-
-      if (shiftVal === 'DAY') {
-        const [sh, sm] = tw.dayStart.split(':').map(Number);
-        const [eh, em] = tw.dayEnd.split(':').map(Number);
-        const startVal = sh * 60 + sm;
-        const endVal = eh * 60 + em;
-        return timeValue < startVal || timeValue > endVal;
-      } else if (shiftVal === 'NIGHT') {
-        const [sh, sm] = tw.nightStart.split(':').map(Number);
-        const [eh, em] = tw.nightEnd.split(':').map(Number);
-        const startVal = sh * 60 + sm;
-        const endVal = eh * 60 + em;
-        
-        if (startVal <= endVal) {
-          return timeValue < startVal || timeValue > endVal;
-        } else {
-          return timeValue < startVal && timeValue > endVal;
-        }
+      // Validate that all required items are answered
+      const unansweredItem = filteredItems.find(item => item.isRequired && (responses[item.id!] === undefined || responses[item.id!] === ''));
+      if (unansweredItem) {
+        alert(`⚠️ กรุณาทำรายการตรวจหรือระบุค่าสำหรับข้อ: "${unansweredItem.name}" ก่อนส่งบันทึก`);
+        setSaving(false);
+        return;
       }
-      return false;
-    };
+      let allNormal = true;
+      const finalResponses: CheckResponse[] = items.map(item => {
+         const shouldSkipOnUse = standbyMode === 'testing' || standbyMode === 'unused';
+         const isFilteredOut = shouldSkipOnUse && item.frequency === 'on-use';
+         if (isFilteredOut) {
+            return {
+               checkItemId: item.id!,
+               type: item.type,
+               itemName: item.name,
+               isNormal: true,
+               valueBoolean: item.type === 'boolean' ? true : undefined,
+               valueNumeric: item.type === 'numeric' ? (item.minValue ?? 0) : undefined,
+            };
+         }
 
-    const isCheckLate = checkIfLate(shift, Date.now());
+         const val = responses[item.id!];
+         const normal = evalIsNormal(item, val);
+         if (!normal) allNormal = false;
+         
+         const resp: any = {
+           checkItemId: item.id,
+           type: item.type,
+           itemName: item.name,
+           isNormal: normal
+         };
+         if (item.type === 'boolean') {
+             resp.valueBoolean = val === 'true' || val === true;
+         } else if (item.type === 'numeric') {
+             resp.valueNumeric = Number(val);
+         }
+         return resp;
+      });
 
-    await saveCheckLog({
-      equipmentId: selectedEq.id,
-      timestamp: Date.now(),
-      dateKey: format(new Date(), 'yyyy-MM-dd'),
-      shift: shift,
-      checkCycle: checkType,
-      operatorId: operatorId,
-      operatorName: opName,
-      status: logStatus,
-      notes: skipOnUse ? `${computedNotes} (ข้ามส่วนตรวจก่อนใช้งานเนื่องจากไม่ได้ผลิต)` : computedNotes,
-      actionTaken: notes,
-      responses: finalResponses,
-      skipOnUse: skipOnUse,
-      isLate: isCheckLate
-    });
+      const logStatus = allNormal ? 'passed' : 'needs_attention';
+      const computedNotes = notes ? notes : (allNormal ? 'ทุกรายการปกติ' : 'พบรายการตกเกณฑ์หรือหลุดค่าควบคุมมาตรฐาน');
 
-    setSaving(false);
-    setSelectedEq(null);
-    await loadEq();
-    if (onSaved) onSaved();
+      const standbyNotePrefix = standbyMode === 'testing'
+         ? 'เครื่องติดคิวทดสอบอยู่ (Testing)'
+         : standbyMode === 'unused'
+           ? 'ไม่มีการใช้งานเครื่อง (Unused)'
+           : '';
+
+      const finalNotes = standbyNotePrefix
+         ? `${standbyNotePrefix}${notes ? ` - ${notes}` : ''}`
+         : computedNotes;
+
+      const checkIfLate = (shiftVal: string, timestamp: number) => {
+        const tw = fetchTimeWindowSettings();
+        const date = new Date(timestamp);
+        const hrs = date.getHours();
+        const mins = date.getMinutes();
+        const timeValue = hrs * 60 + mins;
+
+        if (shiftVal === 'DAY') {
+          const [sh, sm] = tw.dayStart.split(':').map(Number);
+          const [eh, em] = tw.dayEnd.split(':').map(Number);
+          const startVal = sh * 60 + sm;
+          const endVal = eh * 60 + em;
+          return timeValue < startVal || timeValue > endVal;
+        } else if (shiftVal === 'NIGHT') {
+          const [sh, sm] = tw.nightStart.split(':').map(Number);
+          const [eh, em] = tw.nightEnd.split(':').map(Number);
+          const startVal = sh * 60 + sm;
+          const endVal = eh * 60 + em;
+          
+          if (startVal <= endVal) {
+            return timeValue < startVal || timeValue > endVal;
+          } else {
+            return timeValue < startVal && timeValue > endVal;
+          }
+        }
+        return false;
+      };
+
+      const isCheckLate = checkIfLate(shift, Date.now());
+
+      await saveCheckLog({
+        equipmentId: selectedEq.id,
+        timestamp: Date.now(),
+        dateKey: format(new Date(), 'yyyy-MM-dd'),
+        shift: shift,
+        checkCycle: checkType,
+        operatorId: operatorId,
+        operatorName: opName,
+        status: logStatus,
+        notes: finalNotes,
+        actionTaken: notes || standbyNotePrefix,
+        responses: finalResponses,
+        skipOnUse: standbyMode !== 'active',
+        isLate: isCheckLate
+      });
+
+      setSaving(false);
+      setSelectedEq(null);
+      await loadEq();
+      if (onSaved) onSaved();
+    } catch (error) {
+      console.error("Error saving log:", error);
+      alert("❌ ไม่สามารถบันทึกรายงานได้สำเร็จ กรุณาตรวจสอบข้อมูลการบันทึกของคุณและลองอีกครั้ง");
+      setSaving(false);
+    }
   };
 
   const handleAdjustValue = (itemId: string, increment: boolean, minValue?: number, maxValue?: number) => {
@@ -635,8 +674,53 @@ export default function PerformCheck({ onSaved, initialEqCode, selectedDept = 'a
                           const val = e.target.value;
                           setOperatorId(val);
                           const op = operators.find(o => o.employeeId === val);
-                          if (op && op.shift) {
-                            setShift(op.shift);
+                          if (op) {
+                            const today = new Date();
+                            const anchorDate = new Date('2026-01-01T00:00:00');
+                            const diffDays = differenceInCalendarDays(today, anchorDate);
+                            const opClass = op.classification || 'employee';
+                            const opGroup = op.shiftGroup || 'A';
+                            
+                            if (opClass === 'assistant') {
+                              const cycleDay = ((diffDays % 18) + 18) % 18 + 1;
+                              let dayGroup = 'C';
+                              let nightGroup = 'A';
+                              
+                              if (cycleDay >= 1 && cycleDay <= 2) { dayGroup = 'C'; nightGroup = 'A'; }
+                              else if (cycleDay >= 3 && cycleDay <= 4) { dayGroup = 'B'; nightGroup = 'A'; }
+                              else if (cycleDay >= 5 && cycleDay <= 6) { dayGroup = 'B'; nightGroup = 'C'; }
+                              else if (cycleDay >= 7 && cycleDay <= 8) { dayGroup = 'A'; nightGroup = 'C'; }
+                              else if (cycleDay >= 9 && cycleDay <= 10) { dayGroup = 'A'; nightGroup = 'B'; }
+                              else if (cycleDay >= 11 && cycleDay <= 12) { dayGroup = 'C'; nightGroup = 'B'; }
+                              else if (cycleDay >= 13 && cycleDay <= 14) { dayGroup = 'C'; nightGroup = 'A'; }
+                              else if (cycleDay >= 15 && cycleDay <= 16) { dayGroup = 'B'; nightGroup = 'A'; }
+                              else if (cycleDay >= 17 && cycleDay <= 18) { dayGroup = 'B'; nightGroup = 'C'; }
+                              
+                              if (opGroup === dayGroup) {
+                                setShift('DAY');
+                              } else if (opGroup === nightGroup) {
+                                setShift('NIGHT');
+                              } else {
+                                setShift('DAY');
+                              }
+                            } else {
+                              const cycleDay = ((diffDays % 12) + 12) % 12 + 1;
+                              let dayGroup = 'A';
+                              let nightGroup = 'B';
+                              
+                              if (cycleDay >= 1 && cycleDay <= 3) { dayGroup = 'A'; nightGroup = 'B'; }
+                              else if (cycleDay >= 4 && cycleDay <= 6) { dayGroup = 'C'; nightGroup = 'D'; }
+                              else if (cycleDay >= 7 && cycleDay <= 9) { dayGroup = 'B'; nightGroup = 'A'; }
+                              else if (cycleDay >= 10 && cycleDay <= 12) { dayGroup = 'D'; nightGroup = 'C'; }
+                              
+                              if (opGroup === dayGroup) {
+                                setShift('DAY');
+                              } else if (opGroup === nightGroup) {
+                                setShift('NIGHT');
+                              } else {
+                                setShift('DAY');
+                              }
+                            }
                           }
                         }}
                         className="w-full px-4 py-3 bg-slate-100 border-2 border-slate-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:bg-white text-sm sm:text-base font-black text-slate-900 cursor-pointer appearance-none outline-none"
@@ -653,84 +737,49 @@ export default function PerformCheck({ onSaved, initialEqCode, selectedDept = 'a
                   {/* Shift Selection Styled as Large Touchable Segmented Control Cards */}
                   <div>
                     <label className="block text-xs font-black text-slate-800 uppercase tracking-wider mb-2">กะการทำงาน (Shift Selection) *</label>
-                    <div className="grid grid-cols-3 gap-2">
+                    <div className="grid grid-cols-2 gap-2">
                       <ShiftButton active={shift === 'DAY'} onClick={() => setShift('DAY')} icon={<Sun className="w-5 h-5 text-amber-600" />} label="กะกลางวัน" />
                       <ShiftButton active={shift === 'NIGHT'} onClick={() => setShift('NIGHT')} icon={<Moon className="w-5 h-5 text-indigo-600" />} label="กะกลางคืน" />
-                      <ShiftButton active={shift === 'OTHER'} onClick={() => setShift('OTHER')} icon={<Cog className="w-5 h-5 text-slate-700" />} label="กะพิเศษ" />
                     </div>
                   </div>
 
-                  {/* Cycle check selection */}
-                  <div>
-                    <label className="block text-xs font-black text-slate-800 uppercase tracking-wider mb-2">วัตถุประสงค์ในการตรวจเช็ก *</label>
-                    <div className="relative">
-                      <select 
-                        required 
-                        value={checkType}
-                        onChange={e => setCheckType(e.target.value)}
-                        className="w-full px-4 py-3 bg-slate-100 border-2 border-slate-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:bg-white text-sm sm:text-base font-black text-slate-900 cursor-pointer appearance-none outline-none"
-                      >
-                        <option value="all" className="text-slate-900 font-bold">ตรวจสอบพารามิเตอร์ปกติทั้งหมด</option>
-                        <option value="daily" className="text-slate-900 font-bold">ตรวจสอบประจำวันเท่านั้น (Daily Only)</option>
-                        <option value="on-use" className="text-slate-900 font-bold">ตรวจสอบเมื่อใช้งานเครื่อง (On Use Only)</option>
-                      </select>
-                      <div className="absolute right-4 top-1/2 -translate-y-1/2 pointer-events-none text-slate-800 font-extrabold text-sm">▼</div>
-                    </div>
-                  </div>
-                </div>
-
-                {/* ZONE 1.5: QUICK STANDBY CARD (เครื่องไม่ได้ใช้งาน / ติดทดสอบ) */}
-                <div className="bg-amber-50 p-5 rounded-3xl border-2 border-dashed border-amber-200/80 shadow-xs space-y-3">
-                   <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
-                      <div className="min-w-0 flex-1">
-                         <h4 className="text-xs sm:text-sm font-black text-amber-900 flex items-center gap-1.5">
-                            💤 บันทึกเครื่องไม่ได้ใช้งาน / ติดทดสอบอยู่?
-                         </h4>
-                         <p className="text-[10px] sm:text-xs text-amber-700 font-bold mt-1 leading-relaxed">
-                            หากพนักงานเดินมาตรวจสอบแล้วพบว่าเครื่องไม่ได้ใช้งาน หรือติดทดสอบระบบอยู่ สามารถกดบันทึกข้ามได้ทันที สถานะจะไม่ขึ้นค้างตรวจในระบบ
-                         </p>
-                      </div>
+                  {/* Standby / Bypass Selection buttons */}
+                  <div className="pt-2 border-t border-slate-100">
+                    <label className="block text-xs font-black text-slate-800 uppercase tracking-wider mb-2">สถานะการใช้งานเครื่องในกะนี้ (Machine Status) *</label>
+                    <div className="grid grid-cols-2 gap-3">
                       <button
-                         type="button"
-                         onClick={handleSetStandbyFromCheck}
-                         className="w-full sm:w-auto px-4 py-2.5 bg-amber-600 hover:bg-amber-700 text-white font-extrabold text-xs sm:text-sm rounded-xl transition-all shadow-md active:scale-95 shrink-0 flex items-center justify-center gap-1.5 cursor-pointer border border-amber-700"
+                        type="button"
+                        onClick={() => setStandbyMode(prev => prev === 'testing' ? 'active' : 'testing')}
+                        className={cn(
+                          "p-4 rounded-2xl border-2 flex flex-col items-center justify-center text-center gap-1.5 transition-all cursor-pointer active:scale-95 shadow-sm",
+                          standbyMode === 'testing' 
+                            ? "bg-amber-500 border-amber-600 text-white shadow-amber-500/10" 
+                            : "bg-slate-50 border-slate-200 text-slate-700 hover:bg-slate-100"
+                        )}
                       >
-                         💤 บันทึกเครื่องติดทดสอบ
+                        <span className="text-xl">🧪</span>
+                        <span className="text-xs font-black leading-snug">เครื่องติดคิวทดสอบอยู่</span>
+                        <span className="text-[10px] opacity-85 leading-none font-bold">Testing Queue</span>
                       </button>
-                   </div>
+                      <button
+                        type="button"
+                        onClick={() => setStandbyMode(prev => prev === 'unused' ? 'active' : 'unused')}
+                        className={cn(
+                          "p-4 rounded-2xl border-2 flex flex-col items-center justify-center text-center gap-1.5 transition-all cursor-pointer active:scale-95 shadow-sm",
+                          standbyMode === 'unused' 
+                            ? "bg-indigo-600 border-indigo-700 text-white shadow-indigo-500/10" 
+                            : "bg-slate-50 border-slate-200 text-slate-700 hover:bg-slate-100"
+                        )}
+                      >
+                        <span className="text-xl">💤</span>
+                        <span className="text-xs font-black leading-snug">ไม่มีการใช้งานเครื่อง</span>
+                        <span className="text-[10px] opacity-85 leading-none font-bold">No Machine Usage</span>
+                      </button>
+                    </div>
+                  </div>
                 </div>
 
-                {hasOnUseItems && (
-                  <div className="bg-white p-5 rounded-3xl border border-indigo-100 bg-gradient-to-br from-indigo-50/50 to-white shadow-sm space-y-3">
-                     <div className="flex items-center justify-between gap-3">
-                        <div className="min-w-0">
-                           <h4 className="text-sm font-black text-slate-900 flex items-center gap-1.5">
-                              ⚙️ พารามิเตอร์ก่อนการใช้งานเครื่อง (On-Use)
-                           </h4>
-                           <p className="text-[10px] text-slate-500 font-bold mt-0.5 leading-snug">
-                              หากกะนี้ไม่มีการใช้งานเครื่องนี้เลย สามารถกดปิดเพื่อยกเว้นการตรวจสอบส่วนนี้ได้
-                           </p>
-                        </div>
-                        <button
-                           type="button"
-                           onClick={() => setSkipOnUse(!skipOnUse)}
-                           className={cn(
-                              "px-3 py-2 rounded-xl font-bold text-xs border transition-all cursor-pointer active:scale-95 shadow-sm whitespace-nowrap shrink-0",
-                              skipOnUse 
-                                ? "bg-amber-500 border-amber-600 text-white hover:bg-amber-600 shadow-amber-500/10" 
-                                : "bg-white border-slate-200 text-slate-700 hover:bg-slate-50"
-                           )}
-                        >
-                           {skipOnUse ? "💤 ไม่มีการใช้งานเครื่อง" : "⚙️ มีการใช้งานเครื่อง"}
-                        </button>
-                     </div>
-                     {skipOnUse && (
-                        <div className="text-[10px] text-amber-800 bg-amber-50/70 p-2.5 rounded-xl border border-amber-200/50 font-bold leading-relaxed">
-                           💡 เลือก <b>"ไม่มีการใช้เครื่องนั้น"</b> แล้ว ระบบจะข้ามข้อกำหนดก่อนการผลิต และตรวจสอบเฉพาะพารามิเตอร์ประจำวันเท่านั้น สถานะการตรวจสอบจึงจะผ่านเป็น <b>"ครบ"</b> โดยสมบูรณ์แบบ
-                        </div>
-                     )}
-                  </div>
-                )}
+
 
                 {/* ZONE 2: รายการตรวจสอบพารามิเตอร์ (Validation Checklist Zone) */}
                 <div className="space-y-4">
@@ -739,144 +788,240 @@ export default function PerformCheck({ onSaved, initialEqCode, selectedDept = 'a
                     โซนที่ 2: รายการคำถามตรวจสอบคุณภาพ
                   </h3>
 
+                  {standbyMode !== 'active' && (
+                     <div className={cn(
+                        "p-5 border rounded-3xl flex items-start gap-3.5 text-xs shadow-xs transition-all duration-300 relative overflow-hidden",
+                        standbyMode === 'testing'
+                          ? "bg-amber-50/70 border-amber-300/80 text-amber-950"
+                          : "bg-indigo-50/40 border-indigo-300/80 text-indigo-950"
+                     )}>
+                        <div className={cn(
+                           "w-10 h-10 rounded-xl flex items-center justify-center text-xl shrink-0 shadow-inner border",
+                           standbyMode === 'testing'
+                             ? "bg-amber-100 border-amber-200/50 text-amber-600"
+                             : "bg-indigo-100 border-indigo-200/50 text-indigo-600"
+                        )}>
+                           {standbyMode === 'testing' ? '🧪' : '💤'}
+                        </div>
+                        <div className="space-y-1">
+                           <h4 className="text-sm font-black flex items-center gap-1.5">
+                              🔔 ระบบเปิดโหมดข้ามส่วนตรวจ On-Use อัตโนมัติ
+                           </h4>
+                           <p className="font-bold opacity-85 leading-relaxed">
+                              เนื่องจากเครื่องจักรอยู่ในสถานะ <span className="underline font-black">{standbyMode === 'testing' ? 'เครื่องติดคิวทดสอบอยู่ (Testing)' : 'ไม่มีการใช้งานเครื่อง (Unused)'}</span> ระบบจึงทำการซ่อนพารามิเตอร์ตรวจก่อนผลิต (On-Use) ให้โดยอัตโนมัติ <b>แต่พนักงานยังคงต้องทำการเดินตรวจสอบหัวข้อประจำวัน (Daily) ที่เหลือตามปกติครับ</b>
+                           </p>
+                        </div>
+                     </div>
+                  )}
+
                   {filteredItems.length === 0 ? (
-                    <div className="p-8 border-2 border-dashed border-slate-200 rounded-3xl flex flex-col items-center justify-center text-center bg-white shadow-xs">
-                       <p className="text-slate-500 text-xs font-bold">ไม่มีรายการคำถามที่ตรงกับรอบการตรวจนี้</p>
-                    </div>
+                     <div className="p-8 border-2 border-dashed border-slate-200 rounded-3xl flex flex-col items-center justify-center text-center bg-white shadow-xs">
+                        <p className="text-slate-500 text-xs font-bold">ไม่มีรายการคำถามที่ตรงกับรอบการตรวจนี้</p>
+                     </div>
                   ) : (
-                    Array.from(new Set(filteredItems.map(i => i.category || 'General Checklist'))).map((category, catIdx) => (
-                       <div key={category} className="space-y-3.5">
+                    Array.from(new Set(filteredItems.map(i => i.category || 'General Checklist'))).map((category) => {
+                       const originalCatIdx = categoryOrder.indexOf(category);
+                       const catIdx = originalCatIdx !== -1 ? originalCatIdx : 0;
+                       return (
+                       <div key={category} className="space-y-4">
                          {/* Category Header */}
-                         <div className="flex items-center gap-2 px-1 pt-1">
-                            <span className="w-1.5 h-1.5 rounded-full bg-indigo-500 shrink-0"></span>
-                            <span className="text-[11px] font-extrabold text-slate-400 uppercase tracking-widest leading-none">{category}</span>
-                            <div className="h-px bg-slate-200/80 flex-1"></div>
+                         <div className="flex items-center gap-2.5 px-1 pt-2">
+                            <span className={cn(
+                               "px-3 py-1.5 rounded-xl text-[11px] font-black uppercase tracking-wider leading-none shadow-xs border text-white",
+                               catIdx % 4 === 0 ? "bg-indigo-600 border-indigo-700" :
+                               catIdx % 4 === 1 ? "bg-teal-600 border-teal-700" :
+                               catIdx % 4 === 2 ? "bg-violet-600 border-violet-700" :
+                               "bg-amber-600 border-amber-700"
+                            )}>
+                               หมวดหมู่ที่ {catIdx + 1}: {category}
+                            </span>
+                            <div className="h-0.5 bg-slate-200/80 flex-1 rounded-full"></div>
                          </div>
                          
                          {filteredItems.filter(item => (item.category || 'General Checklist') === category).map((item, idx) => {
                            const hasValue = responses[item.id] !== undefined && responses[item.id] !== '';
                            const isNormal = hasValue ? evalIsNormal(item, responses[item.id]) : true;
+                           const isActive = activeItemId === item.id;
 
                            return (
-                             <div key={item.id} className="bg-white border border-slate-200/80 p-5 rounded-3xl shadow-sm hover:shadow-md transition-all duration-300 relative overflow-hidden">
-                               {/* Colored side indicator for state */}
+                             <div 
+                               key={item.id}
+                               onClick={() => setActiveItemId(item.id)}
+                               className={cn(
+                                 "p-5 rounded-[2rem] transition-all duration-300 relative overflow-hidden border-2 shadow-sm hover:shadow-md cursor-pointer",
+                                 isActive
+                                   ? "bg-indigo-50/40 border-indigo-500 ring-4 ring-indigo-500/15 scale-[1.01] shadow-indigo-100"
+                                   : hasValue 
+                                     ? isNormal 
+                                       ? "bg-emerald-50/30 border-emerald-500 text-emerald-950" 
+                                       : "bg-rose-50/30 border-rose-500 text-rose-950"
+                                     : "bg-white border-slate-200/80 hover:border-indigo-200 text-slate-800"
+                               )}
+                             >
+                               {/* Header bar of the card */}
+                               <div className="flex justify-between items-center mb-3.5 relative z-10 pl-2">
+                                 <span className={cn(
+                                   "px-2.5 py-1 rounded-lg text-[9px] font-black uppercase tracking-wider border leading-none shadow-xs transition-colors duration-200",
+                                   isActive
+                                     ? "bg-indigo-600 border-indigo-700 text-white"
+                                     : hasValue
+                                       ? isNormal
+                                         ? "bg-emerald-600 border-emerald-700 text-white"
+                                         : "bg-rose-600 border-rose-700 text-white"
+                                       : "bg-slate-100 border-slate-200 text-slate-500"
+                                 )}>
+                                   {isActive 
+                                     ? "👉 กำลังป้อนข้อมูลตรวจข้อนี้" 
+                                     : hasValue 
+                                       ? isNormal 
+                                         ? "✅ ปกติ / ผ่านเกณฑ์" 
+                                         : "🚨 ผิดปกติ / ตกเกณฑ์มาตรฐาน"
+                                       : "⏳ รอคีย์บันทึกผลตรวจ"}
+                                 </span>
+                                 
+                                 {/* Small number badge */}
+                                 <span className="text-[10px] font-mono font-bold text-slate-400 bg-slate-100/50 border border-slate-200/40 px-2 py-0.5 rounded-md">
+                                   ข้อ {catIdx + 1}.{idx + 1}
+                                 </span>
+                                </div>
+
+                               {/* Colored left edge indicator */}
                                <div className={cn(
-                                 "absolute left-0 top-0 bottom-0 w-1",
-                                 hasValue 
-                                   ? isNormal ? "bg-emerald-500" : "bg-rose-500"
-                                   : "bg-slate-200"
-                               )}></div>
+                                 "absolute left-0 top-0 bottom-0 w-2 transition-colors duration-300",
+                                 isActive
+                                   ? "bg-indigo-500"
+                                   : hasValue 
+                                     ? isNormal ? "bg-emerald-500" : "bg-rose-500"
+                                     : "bg-slate-300"
+                                )}></div>
                                
-                               {/* Parameter header */}
-                               <div className="pl-1 space-y-1.5 mb-4">
-                                 <label className="block text-sm sm:text-base font-black text-slate-900 leading-snug">
-                                   <span className="text-indigo-600 font-mono text-[10px] border border-indigo-100 bg-indigo-50/50 px-2 py-0.5 rounded-md mr-1.5">{catIdx + 1}.{idx + 1}</span>
+                               {/* Parameter details */}
+                               <div className="pl-2 space-y-1.5 mb-4 relative z-10">
+                                 <label className="block text-base font-black text-slate-900 leading-tight">
                                    {item.name}
                                    {item.isRequired && <span className="text-rose-500 font-bold ml-1">*</span>}
                                  </label>
                                  
                                  {item.criteriaText && (
-                                   <div className="text-[11px] text-slate-500 font-bold flex items-center gap-1">
-                                     <span className="opacity-70 text-[9px] uppercase tracking-wider">เกณฑ์มาตรฐาน:</span>
-                                     <span className="text-slate-800 bg-slate-50 px-2 py-0.5 rounded border border-slate-100">{item.criteriaText}</span>
+                                   <div className="text-xs text-slate-600 font-bold flex items-center gap-1.5 mt-1">
+                                     <span className="opacity-70 text-[9px] uppercase tracking-wider text-slate-500">มาตรฐานเกณฑ์ตรวจ:</span>
+                                     <span className="text-slate-800 bg-slate-100/80 px-2.5 py-0.5 rounded-lg border border-slate-200/60 font-extrabold">{item.criteriaText}</span>
                                    </div>
                                  )}
                                </div>
 
                                {/* TACTILE INPUT AREA FOR MOBILE */}
-                               <div className="pl-1">
+                               <div className="pl-2 relative z-10">
                                  {item.type === 'boolean' ? (
-                                   /* Dual giant tactile buttons for mobile */
+                                   /* Giant tactile buttons */
                                    <div className="grid grid-cols-2 gap-3.5">
-                                      <button
-                                        type="button"
-                                        onClick={() => setResponses({...responses, [item.id]: 'true'})}
-                                        className={cn(
-                                          "py-3.5 px-4 rounded-xl border-2 flex items-center justify-center gap-2 transition-all cursor-pointer shadow-xs font-bold text-xs sm:text-sm active:scale-95",
-                                          responses[item.id] === 'true' 
-                                            ? "bg-emerald-500 border-emerald-600 text-white shadow-emerald-500/10" 
-                                            : "bg-white border-slate-200 text-slate-600 hover:bg-slate-50"
-                                        )}
-                                      >
-                                        <Check className="w-4 h-4 shrink-0" />
-                                        <span>ปกติ (Pass)</span>
-                                      </button>
-                                      
-                                      <button
-                                        type="button"
-                                        onClick={() => setResponses({...responses, [item.id]: 'false'})}
-                                        className={cn(
-                                          "py-3.5 px-4 rounded-xl border-2 flex items-center justify-center gap-2 transition-all cursor-pointer shadow-xs font-bold text-xs sm:text-sm active:scale-95",
-                                          responses[item.id] === 'false' 
-                                            ? "bg-rose-500 border-rose-600 text-white shadow-rose-500/10" 
-                                            : "bg-white border-slate-200 text-slate-600 hover:bg-slate-50"
-                                        )}
-                                      >
-                                        <X className="w-4 h-4 shrink-0" />
-                                        <span>ชำรุด (Fail)</span>
-                                      </button>
+                                     <button
+                                       type="button"
+                                       onClick={(e) => {
+                                         e.stopPropagation();
+                                         setResponses({...responses, [item.id]: 'true'});
+                                         setActiveItemId(item.id);
+                                       }}
+                                       className={cn(
+                                         "py-4 px-4 rounded-2xl border-2 flex flex-col sm:flex-row items-center justify-center gap-2 transition-all cursor-pointer shadow-xs font-black text-sm active:scale-95",
+                                         responses[item.id] === 'true' 
+                                           ? "bg-emerald-500 border-emerald-600 text-white shadow-emerald-500/20" 
+                                           : "bg-white border-slate-200 text-slate-700 hover:bg-slate-50"
+                                       )}
+                                     >
+                                       <Check className="w-5 h-5 shrink-0" />
+                                       <span>ปกติ (Pass)</span>
+                                     </button>
+                                     
+                                     <button
+                                       type="button"
+                                       onClick={(e) => {
+                                         e.stopPropagation();
+                                         setResponses({...responses, [item.id]: 'false'});
+                                         setActiveItemId(item.id);
+                                       }}
+                                       className={cn(
+                                         "py-4 px-4 rounded-2xl border-2 flex flex-col sm:flex-row items-center justify-center gap-2 transition-all cursor-pointer shadow-xs font-black text-sm active:scale-95",
+                                         responses[item.id] === 'false' 
+                                           ? "bg-rose-500 border-rose-600 text-white shadow-rose-500/20" 
+                                           : "bg-white border-slate-200 text-slate-700 hover:bg-slate-50"
+                                       )}
+                                     >
+                                       <X className="w-5 h-5 shrink-0" />
+                                       <span>ชำรุด (Fail)</span>
+                                     </button>
                                    </div>
                                  ) : (
-                                   /* Sleek digital telemetry input layout with adjustment buttons */
-                                   <div className="space-y-2.5">
-                                      <div className="flex items-center gap-2">
-                                         {/* Subtract button */}
-                                         <button
-                                           type="button"
-                                           onClick={() => handleAdjustValue(item.id!, false, item.minValue, item.maxValue)}
-                                           className="w-12 h-12 bg-slate-100 hover:bg-slate-200 border border-slate-200 text-slate-800 rounded-xl flex items-center justify-center font-bold text-xl cursor-pointer active:scale-95 transition-transform"
-                                         >
-                                           <Minus className="w-4 h-4" />
-                                         </button>
+                                   /* Sleek tactile telemetry input with slider adjust buttons */
+                                   <div className="space-y-3">
+                                     <div className="flex items-center gap-2">
+                                       <button
+                                         type="button"
+                                         onClick={(e) => {
+                                           e.stopPropagation();
+                                           handleAdjustValue(item.id!, false, item.minValue, item.maxValue);
+                                           setActiveItemId(item.id!);
+                                         }}
+                                         className="w-14 h-14 bg-slate-100 hover:bg-slate-200 border border-slate-200 text-slate-800 rounded-2xl flex items-center justify-center font-bold text-xl cursor-pointer active:scale-95 transition-transform"
+                                       >
+                                         <Minus className="w-5 h-5" />
+                                       </button>
 
-                                         {/* Value display / numerical input */}
-                                         <div className="relative flex-1">
-                                            <input 
-                                              type="number" 
-                                              step="any"
-                                              required={item.isRequired}
-                                              value={responses[item.id] || ''}
-                                              onChange={e => setResponses({...responses, [item.id]: e.target.value})}
-                                              placeholder="ระบุตัวเลข..."
-                                              className="w-full text-center px-4 py-3 bg-slate-50 border-2 border-slate-200 focus:bg-white rounded-xl focus:outline-none focus:border-indigo-500 font-mono text-lg font-black text-slate-800 shadow-xs"
-                                            />
-                                            {item.unit && (
-                                              <span className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400 font-bold text-xs uppercase">{item.unit}</span>
-                                            )}
+                                       <div className="relative flex-1">
+                                         <input 
+                                           type="number" 
+                                           step="any"
+                                           required={item.isRequired}
+                                           value={responses[item.id] || ''}
+                                           onFocus={() => setActiveItemId(item.id)}
+                                           onClick={(e) => e.stopPropagation()}
+                                           onChange={e => {
+                                             setResponses({...responses, [item.id]: e.target.value});
+                                             setActiveItemId(item.id);
+                                           }}
+                                           placeholder="คีย์ระบุตัวเลข..."
+                                           className="w-full text-center px-4 py-3.5 bg-slate-50 border-2 border-slate-200 focus:bg-white rounded-2xl focus:outline-none focus:border-indigo-500 font-mono text-xl font-black text-slate-800 shadow-xs"
+                                         />
+                                         {item.unit && (
+                                           <span className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400 font-extrabold text-xs uppercase">{item.unit}</span>
+                                         )}
+                                       </div>
+
+                                       <button
+                                         type="button"
+                                         onClick={(e) => {
+                                           e.stopPropagation();
+                                           handleAdjustValue(item.id!, true, item.minValue, item.maxValue);
+                                           setActiveItemId(item.id!);
+                                         }}
+                                         className="w-14 h-14 bg-slate-100 hover:bg-slate-200 border border-slate-200 text-slate-800 rounded-2xl flex items-center justify-center font-bold text-xl cursor-pointer active:scale-95 transition-transform"
+                                        >
+                                         <Plus className="w-5 h-5" />
+                                       </button>
+                                     </div>
+
+                                     {/* Target spec limits */}
+                                     {item.minValue !== undefined && item.maxValue !== undefined && (
+                                       <div className="flex justify-between items-center text-[11px] bg-slate-50 p-2.5 rounded-xl border border-slate-100">
+                                         <span className="text-slate-400 font-bold uppercase tracking-wide">ช่วงปกติ (LCL - UCL):</span>
+                                         <span className="font-mono font-black text-indigo-700 bg-indigo-50 px-2.5 py-0.5 rounded-lg border border-indigo-100">{item.minValue} ถึง {item.maxValue} {item.unit || ''}</span>
+                                       </div>
+                                     )}
+
+                                     {/* Instant Visual validation feedback */}
+                                     {hasValue && (
+                                       !isNormal ? (
+                                         <div className="text-[11px] text-rose-700 font-bold bg-rose-50 border border-rose-200 p-2.5 rounded-xl flex items-center gap-2 animate-in fade-in slide-in-from-top-2">
+                                           <AlertTriangle className="w-4.5 h-4.5 text-rose-500 shrink-0" />
+                                           <span>ค่าที่บันทึก <b>"หลุดนอกช่วงมาตรฐานควบคุม"</b> กรุณากรอกหมายเหตุก่อนส่ง</span>
                                          </div>
-
-                                         {/* Add button */}
-                                         <button
-                                           type="button"
-                                           onClick={() => handleAdjustValue(item.id!, true, item.minValue, item.maxValue)}
-                                           className="w-12 h-12 bg-slate-100 hover:bg-slate-200 border border-slate-200 text-slate-800 rounded-xl flex items-center justify-center font-bold text-xl cursor-pointer active:scale-95 transition-transform"
-                                         >
-                                           <Plus className="w-4 h-4" />
-                                         </button>
-                                      </div>
-
-                                      {/* Target Spec Guidelines banner */}
-                                      {item.minValue !== undefined && item.maxValue !== undefined && (
-                                        <div className="flex justify-between items-center text-[10px] bg-slate-50 p-2.5 rounded-lg border border-slate-100">
-                                          <span className="text-slate-400 font-bold uppercase tracking-wide">ขอบเขตค่าปกติ:</span>
-                                          <span className="font-mono font-bold text-indigo-700 bg-indigo-50 px-2 py-0.5 rounded border border-indigo-100">{item.minValue} ถึง {item.maxValue} {item.unit || ''}</span>
-                                        </div>
-                                      )}
-
-                                      {/* Instant Visual validation feedback */}
-                                      {hasValue && (
-                                         !isNormal ? (
-                                             <div className="text-[11px] text-rose-700 font-bold bg-rose-50 border border-rose-200 p-2.5 rounded-xl flex items-center gap-2 animate-in fade-in slide-in-from-top-2">
-                                                <AlertTriangle className="w-4 h-4 text-rose-500 shrink-0" />
-                                                <span>ค่าที่บันทึก <b>"หลุดช่วงมาตรฐาน"</b> กรุณาลงหมายเหตุก่อนส่ง</span>
-                                             </div>
-                                         ) : (
-                                             <div className="text-[11px] text-emerald-700 font-bold bg-emerald-50 border border-emerald-200 p-2.5 rounded-xl flex items-center gap-2 animate-in fade-in slide-in-from-top-2">
-                                                <CheckCircle className="w-4 h-4 text-emerald-500 shrink-0" />
-                                                <span>ค่าปกติ อยู่ในเกณฑ์มาตรฐาน</span>
-                                             </div>
-                                         )
-                                      )}
+                                       ) : (
+                                         <div className="text-[11px] text-emerald-700 font-bold bg-emerald-50 border border-emerald-200 p-2.5 rounded-xl flex items-center gap-2 animate-in fade-in slide-in-from-top-2">
+                                           <CheckCircle className="w-4.5 h-4.5 text-emerald-500 shrink-0" />
+                                           <span>ค่าปกติ อยู่ในเกณฑ์มาตรฐาน</span>
+                                         </div>
+                                       )
+                                     )}
                                    </div>
                                  )}
                                </div>
@@ -884,8 +1029,9 @@ export default function PerformCheck({ onSaved, initialEqCode, selectedDept = 'a
                            );
                          })}
                        </div>
-                    ))
-                   )}
+                    );
+                    }))
+                   }
                 </div>
 
                 {/* ZONE 3: หมายเหตุเพิ่มเติมและส่งบันทึก (Observations & Validation Submit) */}
@@ -916,7 +1062,9 @@ export default function PerformCheck({ onSaved, initialEqCode, selectedDept = 'a
                       "w-full py-4.5 rounded-2xl font-bold tracking-wide text-white transition-all flex items-center justify-center gap-2 text-sm cursor-pointer shadow-lg",
                       saving 
                         ? "bg-slate-400 cursor-not-allowed" 
-                        : "bg-indigo-600 hover:bg-indigo-700 shadow-indigo-600/10 active:scale-[0.99]"
+                        : standbyMode === 'testing'
+                          ? "bg-amber-500 hover:bg-amber-600 shadow-amber-500/10 active:scale-[0.99]"
+                          : "bg-indigo-600 hover:bg-indigo-700 shadow-indigo-600/10 active:scale-[0.99]"
                     )}
                   >
                     {saving ? (
@@ -924,7 +1072,11 @@ export default function PerformCheck({ onSaved, initialEqCode, selectedDept = 'a
                     ) : (
                       <>
                         <CheckCircle className="w-5 h-5" />
-                        ยืนยันและบันทึกผลตรวจสอบเครื่องจักร
+                        {standbyMode === 'testing'
+                          ? "บันทึกสถานะเครื่อง: ติดคิวทดสอบอยู่ (Testing)"
+                          : standbyMode === 'unused'
+                            ? "บันทึกสถานะเครื่อง: ไม่มีการใช้งานเครื่อง (Unused)"
+                            : "ยืนยันและบันทึกผลตรวจสอบเครื่องจักร"}
                       </>
                     )}
                   </button>

@@ -42,8 +42,10 @@ export interface Operator {
   name: string;
   employeeId: string;
   isActive: boolean;
-  role: 'operator' | 'shift_leader';
-  shift: 'DAY' | 'NIGHT';
+  role: 'operator' | 'shift_leader' | 'assistant';
+  shift?: 'DAY' | 'NIGHT';
+  classification?: 'employee' | 'assistant';
+  shiftGroup?: 'A' | 'B' | 'C' | 'D';
 }
 
 export interface CheckLog {

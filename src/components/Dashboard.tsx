@@ -39,6 +39,209 @@ import { motion, AnimatePresence } from 'motion/react';
 import { Equipment, CheckLog, CheckItem, Operator, TimeWindowSettings } from '../types';
 import { cn } from '../lib/utils';
 
+const getShiftLeaderForDate = (dateStr: string, shift: 'DAY' | 'NIGHT', operatorsList: Operator[]) => {
+  if (!dateStr) return 'ไม่ระบุ';
+  const dateParts = dateStr.split('-');
+  const targetDate = new Date(Number(dateParts[0]), Number(dateParts[1]) - 1, Number(dateParts[2]), 12, 0, 0);
+  const anchorDate = new Date('2026-01-01T12:00:00');
+  
+  const diffTime = targetDate.getTime() - anchorDate.getTime();
+  const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24));
+  const cycleDay = ((diffDays % 12) + 12) % 12 + 1;
+  
+  let currentGroup = 'A';
+  if (shift === 'DAY') {
+    if (cycleDay >= 1 && cycleDay <= 3) currentGroup = 'A';
+    else if (cycleDay >= 4 && cycleDay <= 6) currentGroup = 'C';
+    else if (cycleDay >= 7 && cycleDay <= 9) currentGroup = 'B';
+    else if (cycleDay >= 10 && cycleDay <= 12) currentGroup = 'D';
+  } else {
+    // NIGHT shift
+    if (cycleDay >= 1 && cycleDay <= 3) currentGroup = 'B';
+    else if (cycleDay >= 4 && cycleDay <= 6) currentGroup = 'D';
+    else if (cycleDay >= 7 && cycleDay <= 9) currentGroup = 'A';
+    else if (cycleDay >= 10 && cycleDay <= 12) currentGroup = 'C';
+  }
+  
+  const leader = operatorsList.find(o => 
+    o.isActive && 
+    (!o.classification || o.classification === 'employee') && 
+    o.role === 'shift_leader' && 
+    o.shiftGroup === currentGroup
+  );
+  
+  return leader ? leader.name : (shift === 'DAY' ? 'Sarah Connor' : 'Tony Stark');
+};
+
+const getAssistantsForDate = (dateStr: string, shift: 'DAY' | 'NIGHT', operatorsList: Operator[]) => {
+  if (!dateStr) return 'ไม่มีข้อมูลผู้ช่วย';
+  const dateParts = dateStr.split('-');
+  const targetDate = new Date(Number(dateParts[0]), Number(dateParts[1]) - 1, Number(dateParts[2]), 12, 0, 0);
+  const anchorDate = new Date('2026-01-01T12:00:00');
+  
+  const diffTime = targetDate.getTime() - anchorDate.getTime();
+  const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24));
+  const cycleDay = ((diffDays % 18) + 18) % 18 + 1;
+  
+  let currentGroup = 'C';
+  if (cycleDay >= 1 && cycleDay <= 2) {
+    currentGroup = shift === 'DAY' ? 'C' : 'A';
+  } else if (cycleDay >= 3 && cycleDay <= 4) {
+    currentGroup = shift === 'DAY' ? 'B' : 'A';
+  } else if (cycleDay >= 5 && cycleDay <= 6) {
+    currentGroup = shift === 'DAY' ? 'B' : 'C';
+  } else if (cycleDay >= 7 && cycleDay <= 8) {
+    currentGroup = shift === 'DAY' ? 'A' : 'C';
+  } else if (cycleDay >= 9 && cycleDay <= 10) {
+    currentGroup = shift === 'DAY' ? 'A' : 'B';
+  } else if (cycleDay >= 11 && cycleDay <= 12) {
+    currentGroup = shift === 'DAY' ? 'C' : 'B';
+  } else if (cycleDay >= 13 && cycleDay <= 14) {
+    currentGroup = shift === 'DAY' ? 'C' : 'A';
+  } else if (cycleDay >= 15 && cycleDay <= 16) {
+    currentGroup = shift === 'DAY' ? 'B' : 'A';
+  } else if (cycleDay >= 17 && cycleDay <= 18) {
+    currentGroup = shift === 'DAY' ? 'B' : 'C';
+  }
+  
+  const assistants = operatorsList.filter(o => 
+    o.isActive && 
+    o.classification === 'assistant' && 
+    o.shiftGroup === currentGroup
+  );
+  
+  return assistants.length > 0 ? assistants.map(a => a.name).join(', ') : 'ไม่มีข้อมูลผู้ช่วย';
+};
+
+const getShiftLeaderForToday = (shift: 'DAY' | 'NIGHT', operatorsList: Operator[]) => {
+  const today = new Date();
+  const anchorDate = new Date('2026-01-01T00:00:00');
+  
+  const diffDays = Math.floor((today.getTime() - anchorDate.getTime()) / (1000 * 60 * 60 * 24));
+  const cycleDay = ((diffDays % 12) + 12) % 12 + 1;
+  
+  let currentGroup = 'A';
+  if (shift === 'DAY') {
+    if (cycleDay >= 1 && cycleDay <= 3) currentGroup = 'A';
+    else if (cycleDay >= 4 && cycleDay <= 6) currentGroup = 'C';
+    else if (cycleDay >= 7 && cycleDay <= 9) currentGroup = 'B';
+    else if (cycleDay >= 10 && cycleDay <= 12) currentGroup = 'D';
+  } else {
+    // NIGHT shift
+    if (cycleDay >= 1 && cycleDay <= 3) currentGroup = 'B';
+    else if (cycleDay >= 4 && cycleDay <= 6) currentGroup = 'D';
+    else if (cycleDay >= 7 && cycleDay <= 9) currentGroup = 'A';
+    else if (cycleDay >= 10 && cycleDay <= 12) currentGroup = 'C';
+  }
+  
+  const leader = operatorsList.find(o => 
+    o.isActive && 
+    (!o.classification || o.classification === 'employee') && 
+    o.role === 'shift_leader' && 
+    o.shiftGroup === currentGroup
+  );
+  
+  return leader ? leader.name : (shift === 'DAY' ? 'Sarah Connor' : 'Tony Stark');
+};
+
+const getShiftStatusInfo = (
+  shift: 'DAY' | 'NIGHT',
+  logsList: CheckLog[],
+  activeEqsCount: number,
+  timeSettings: TimeWindowSettings,
+  dashboardDateStr: string
+) => {
+  const shiftLogs = logsList.filter(l => l.shift === shift);
+  const uniqueCheckedEqs = new Set(shiftLogs.map(l => l.equipmentId));
+  const checkedUniqueCount = uniqueCheckedEqs.size;
+  const isComplete = checkedUniqueCount === activeEqsCount && activeEqsCount > 0;
+  
+  // Calculate average check time
+  const checkTimes = shiftLogs.map(l => {
+    const d = new Date(l.timestamp);
+    return d.getHours() + d.getMinutes() / 60;
+  });
+  const avgCheckHour = checkTimes.length > 0 ? checkTimes.reduce((a, b) => a + b, 0) / checkTimes.length : null;
+
+  const parseTimeToHours = (timeStr: string): number => {
+    if (!timeStr) return 0;
+    const [h, m] = timeStr.split(':').map(Number);
+    return h + m / 60;
+  };
+
+  const startHour = parseTimeToHours(shift === 'DAY' ? timeSettings.dayStart : timeSettings.nightStart);
+  const endHour = parseTimeToHours(shift === 'DAY' ? timeSettings.dayEnd : timeSettings.nightEnd);
+
+  const isToday = dashboardDateStr === format(new Date(), 'yyyy-MM-dd');
+  const now = new Date();
+  const currentHour = now.getHours() + now.getMinutes() / 60;
+
+  let status: 'perfect' | 'late_complete' | 'in_progress' | 'overdue' = 'overdue';
+  let statusText = '';
+  let colorClass = '';
+  let badgeColor = '';
+  let plotColor = '';
+
+  if (isComplete) {
+    const avgOnTime = avgCheckHour !== null && avgCheckHour >= startHour && avgCheckHour <= endHour;
+    if (avgOnTime) {
+      status = 'perfect';
+      statusText = 'ตรวจครบตรงเวลากำหนด (On-Time Complete)';
+      colorClass = 'border-emerald-500 bg-emerald-50/20 text-emerald-800';
+      badgeColor = 'bg-emerald-500 text-white';
+      plotColor = '#10B981'; // solid emerald
+    } else {
+      status = 'late_complete';
+      statusText = 'ตรวจครบแต่ล่าช้าเกินเวลา (Late Complete)';
+      colorClass = 'border-amber-500 bg-amber-50/20 text-amber-800';
+      badgeColor = 'bg-amber-500 text-white';
+      plotColor = '#F59E0B'; // orange-yellow
+    }
+  } else {
+    // Incomplete
+    if (isToday) {
+      if (currentHour <= endHour) {
+        status = 'in_progress';
+        statusText = 'อยู่ระหว่างตรวจเช็ก (In Progress)';
+        colorClass = 'border-indigo-500 bg-indigo-50/20 text-indigo-800';
+        badgeColor = 'bg-indigo-600 text-white';
+        plotColor = '#6366F1'; // indigo
+      } else {
+        status = 'overdue';
+        statusText = 'ค้างตรวจ / ล่าช้าตกหล่น (Overdue)';
+        colorClass = 'border-rose-500 bg-rose-50/20 text-rose-800';
+        badgeColor = 'bg-rose-600 text-white';
+        plotColor = '#EF4444'; // red
+      }
+    } else {
+      status = 'overdue';
+      statusText = 'ค้างตรวจตกหล่น (Incomplete)';
+      colorClass = 'border-rose-500 bg-rose-50/20 text-rose-800';
+      badgeColor = 'bg-rose-600 text-white';
+      plotColor = '#EF4444'; // red
+    }
+  }
+
+  return {
+    status,
+    statusText,
+    colorClass,
+    badgeColor,
+    plotColor,
+    avgCheckHour,
+    isComplete,
+    startHour,
+    endHour,
+    checkedUniqueCount
+  };
+};
+
+const getHourString = (fh: number): string => {
+  const h = Math.floor(fh);
+  const m = Math.round((fh - h) * 60);
+  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+};
+
 export default function Dashboard({ selectedDept = 'all' }: { selectedDept?: string }) {
   const [equipments, setEquipments] = useState<Equipment[]>([]);
   const [checkItems, setCheckItems] = useState<CheckItem[]>([]);
@@ -73,6 +276,17 @@ export default function Dashboard({ selectedDept = 'all' }: { selectedDept?: str
   const [latestLogsByEq, setLatestLogsByEq] = useState<Record<string, CheckLog>>({});
   const [activeTab, setActiveTab] = useState<'equipments' | 'shift_monitor'>('equipments');
   const [operators, setOperators] = useState<Operator[]>([]);
+  const [timeSettings, setTimeSettings] = useState<TimeWindowSettings>({
+    dayStart: '08:00',
+    dayEnd: '10:00',
+    nightStart: '20:00',
+    nightEnd: '22:00'
+  });
+  const [trendLogs, setTrendLogs] = useState<CheckLog[]>([]);
+
+  // 1-Month audit filters and search states
+  const [auditStatusFilter, setAuditStatusFilter] = useState<'all' | 'perfect' | 'late_complete' | 'overdue'>('all');
+  const [auditSearchLeader, setAuditSearchLeader] = useState('');
 
   const isLogIncomplete = (log: CheckLog, eqItems: CheckItem[]) => {
     const isIdle = log.notes?.includes('ไม่ได้ใช้งาน') || log.notes?.includes('ติดทดสอบ');
@@ -227,11 +441,24 @@ export default function Dashboard({ selectedDept = 'all' }: { selectedDept?: str
        }
     }));
 
+    // Generate dates range for 30 days of trends (1 month) to support both the 10-day graph and 30-day export
+    const datesRange: string[] = [];
+    for (let i = 29; i >= 0; i--) {
+       const d = new Date(dateStr);
+       d.setDate(d.getDate() - i);
+       datesRange.push(format(d, 'yyyy-MM-dd'));
+    }
+    const logsArrays = await Promise.all(datesRange.map(d => fetchLogs(d)));
+    const allTrendLogs = logsArrays.flat();
+    setTrendLogs(allTrendLogs);
+
     setLatestLogsByEq(latestLogsRecord);
     setEquipments(eqData);
     setCheckItems(itemsData);
     setLogs(dateLogsData);
     setOperators(opData);
+    const settings = fetchTimeWindowSettings();
+    setTimeSettings(settings);
     setLoading(false);
   };
 
@@ -953,12 +1180,18 @@ export default function Dashboard({ selectedDept = 'all' }: { selectedDept?: str
                     const totalItemsCount = logItems.length + orphanResponses.length;
                     const passedCount = selectedLog.responses.filter(r => r.isNormal).length;
                     const failedCount = selectedLog.responses.filter(r => !r.isNormal).length;
-                    const pendingCount = Math.max(0, logItems.length - matchedResponseIds.size);
+                    const skippedCount = selectedLog.skipOnUse
+                       ? logItems.filter(item => item.frequency === 'on-use' && !matchedResponseIds.has(item.id)).length
+                       : 0;
+                    const pendingCount = Math.max(0, logItems.length - matchedResponseIds.size - skippedCount);
 
                     return (
                        <div className="space-y-4 w-full text-left">
                           {/* Summary Statistics Dashboard within Modal */}
-                          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                          <div className={cn(
+                             "grid grid-cols-2 gap-2",
+                             skippedCount > 0 ? "sm:grid-cols-5" : "sm:grid-cols-4"
+                          )}>
                              <div className="bg-slate-100/80 border border-slate-200/50 rounded-2xl p-3 text-center">
                                 <span className="block text-[10px] font-extrabold text-slate-400 uppercase tracking-wider">รายการทั้งหมด</span>
                                 <span className="text-lg font-black text-slate-800 font-mono">{totalItemsCount} <span className="text-[11px] font-bold">ข้อ</span></span>
@@ -978,6 +1211,12 @@ export default function Dashboard({ selectedDept = 'all' }: { selectedDept?: str
                                 <span className={cn("block text-[10px] font-extrabold uppercase tracking-wider", pendingCount > 0 ? "text-amber-600" : "text-slate-400")}>ค้างตรวจ / ไม่ระบุ</span>
                                 <span className={cn("text-lg font-black font-mono", pendingCount > 0 ? "text-amber-700" : "text-slate-500")}>{pendingCount} <span className="text-[11px] font-bold">ข้อ</span></span>
                              </div>
+                             {skippedCount > 0 && (
+                                <div className="bg-sky-50 border border-sky-100 rounded-2xl p-3 text-center">
+                                   <span className="block text-[10px] font-extrabold text-sky-600 uppercase tracking-wider">ละเว้น (เครื่องติดคิวรันอยู่)</span>
+                                   <span className="text-lg font-black text-sky-700 font-mono">{skippedCount} <span className="text-[11px] font-bold">ข้อ</span></span>
+                                </div>
+                             )}
                           </div>
 
                           <div className="bg-slate-50 rounded-2xl p-4 border border-slate-200/60 space-y-4">
@@ -1003,12 +1242,15 @@ export default function Dashboard({ selectedDept = 'all' }: { selectedDept?: str
                                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
                                          {entries.map(({ item, resp }) => {
                                             const isRequired = item.isRequired;
+                                            const isSkippedOnUse = selectedLog.skipOnUse && item.frequency === 'on-use' && !resp;
                                             return (
                                                <div 
                                                   key={item.id} 
                                                   className={cn(
                                                      "p-3 rounded-xl border flex flex-col justify-between text-xs font-semibold bg-white transition-all shadow-xs",
-                                                     !resp 
+                                                     isSkippedOnUse
+                                                        ? "border-sky-100 bg-sky-50/10 hover:border-sky-200"
+                                                        : !resp 
                                                         ? "border-amber-200/70 bg-amber-50/20" 
                                                         : resp.isNormal 
                                                            ? "border-emerald-100 bg-emerald-50/10 hover:border-emerald-200" 
@@ -1036,6 +1278,10 @@ export default function Dashboard({ selectedDept = 'all' }: { selectedDept?: str
                                                               resp.isNormal ? "bg-emerald-100 text-emerald-800" : "bg-rose-100 text-rose-800"
                                                            )}>
                                                               {resp.type === 'boolean' ? (resp.valueBoolean ? 'PASS' : 'FAIL') : `${resp.valueNumeric} ${item.unit || ''}`}
+                                                           </span>
+                                                        ) : isSkippedOnUse ? (
+                                                           <span className="px-2 py-0.5 rounded bg-sky-50 text-sky-700 border border-sky-100 text-[10px] font-extrabold">
+                                                              ⏭️ เครื่องรันอยู่ (ตรวจเฉพาะประจำวัน)
                                                            </span>
                                                         ) : (
                                                            <span className="px-2 py-0.5 rounded bg-amber-100 text-amber-800 text-[10px] font-black">
@@ -1116,11 +1362,625 @@ export default function Dashboard({ selectedDept = 'all' }: { selectedDept?: str
       ) : (
          /* SHIFT & KPI MONITOR PANEL */
          <div className="space-y-6">
+            {/* NEW GRAPH DASHBOARD CONTAINER */}
+            {(() => {
+               const activeEqs = equipments.filter(e => e.status === 'active');
+               const dayLeader = getShiftLeaderForDate(dashboardDate, 'DAY', operators);
+               const dayAssistants = getAssistantsForDate(dashboardDate, 'DAY', operators);
+               const nightLeader = getShiftLeaderForDate(dashboardDate, 'NIGHT', operators);
+               const nightAssistants = getAssistantsForDate(dashboardDate, 'NIGHT', operators);
+
+               const dayStatus = getShiftStatusInfo('DAY', logs, activeEqs.length, timeSettings, dashboardDate);
+               const nightStatus = getShiftStatusInfo('NIGHT', logs, activeEqs.length, timeSettings, dashboardDate);
+
+               const now = new Date();
+               const currentHour = now.getHours() + now.getMinutes() / 60;
+               const isToday = dashboardDate === format(now, 'yyyy-MM-dd');
+
+               // Calculate ticks & positions
+               const parseTimeToHours = (timeStr: string): number => {
+                 if (!timeStr) return 0;
+                 const [h, m] = timeStr.split(':').map(Number);
+                 return h + m / 60;
+               };
+
+               const dayStartH = parseTimeToHours(timeSettings.dayStart);
+               const dayEndH = parseTimeToHours(timeSettings.dayEnd);
+               const nightStartH = parseTimeToHours(timeSettings.nightStart);
+               const nightEndH = parseTimeToHours(timeSettings.nightEnd);
+
+               // Build deficiencies list
+               const deficiencies: any[] = [];
+               activeEqs.forEach(eq => {
+                 const dayLog = logs.find(l => l.equipmentId === eq.id && l.shift === 'DAY');
+                 const nightLog = logs.find(l => l.equipmentId === eq.id && l.shift === 'NIGHT');
+
+                 if (!dayLog) {
+                   const isOverdue = !isToday || currentHour > dayEndH;
+                   if (isOverdue) {
+                     deficiencies.push({
+                       eq,
+                       shift: 'DAY',
+                       type: 'unchecked',
+                       label: '❌ ค้างตรวจกะเช้า (Unchecked)',
+                       time: 'ไม่มีบันทึก',
+                       leader: dayLeader,
+                       assistants: dayAssistants,
+                       color: 'text-red-700 bg-red-50/70',
+                       borderColor: 'border-red-200'
+                     });
+                   }
+                 } else {
+                   const eqItems = checkItems.filter(item => item.equipmentId === eq.id);
+                   const isIncomplete = isLogIncomplete(dayLog, eqItems);
+                   const logTime = new Date(dayLog.timestamp);
+                   const logHour = logTime.getHours() + logTime.getMinutes() / 60;
+                   const isLate = logHour < dayStartH || logHour > dayEndH;
+                   const isFailed = dayLog.status === 'failed' || dayLog.status === 'needs_attention';
+
+                   if (isIncomplete) {
+                     deficiencies.push({
+                       eq,
+                       shift: 'DAY',
+                       type: 'incomplete',
+                       label: '⚠️ ตรวจกะเช้าไม่ครบหัวข้อ',
+                       time: format(dayLog.timestamp, 'HH:mm น.'),
+                       leader: dayLeader,
+                       assistants: dayAssistants,
+                       color: 'text-amber-750 bg-amber-50/70',
+                       borderColor: 'border-amber-200'
+                     });
+                   } else if (isLate) {
+                     deficiencies.push({
+                       eq,
+                       shift: 'DAY',
+                       type: 'late',
+                       label: '⏰ ตรวจกะเช้าล่าช้าเกินช่วงเวลา',
+                       time: format(dayLog.timestamp, 'HH:mm น.'),
+                       leader: dayLeader,
+                       assistants: dayAssistants,
+                       color: 'text-amber-700 bg-amber-50/70 shadow-xs',
+                       borderColor: 'border-amber-200'
+                     });
+                   } else if (isFailed) {
+                     deficiencies.push({
+                       eq,
+                       shift: 'DAY',
+                       type: 'failed',
+                       label: '🔴 อุปกรณ์พบพารามิเตอร์ผิดปกติ (Failed Spec)',
+                       time: format(dayLog.timestamp, 'HH:mm น.'),
+                       leader: dayLeader,
+                       assistants: dayAssistants,
+                       color: 'text-rose-700 bg-rose-50/70',
+                       borderColor: 'border-rose-200'
+                     });
+                   }
+                 }
+
+                 if (!nightLog) {
+                   const isOverdue = !isToday || currentHour > nightEndH;
+                   if (isOverdue) {
+                     deficiencies.push({
+                       eq,
+                       shift: 'NIGHT',
+                       type: 'unchecked',
+                       label: '❌ ค้างตรวจกะดึก (Unchecked)',
+                       time: 'ไม่มีบันทึก',
+                       leader: nightLeader,
+                       assistants: nightAssistants,
+                       color: 'text-red-700 bg-red-50/70',
+                       borderColor: 'border-red-200'
+                     });
+                   }
+                 } else {
+                   const eqItems = checkItems.filter(item => item.equipmentId === eq.id);
+                   const isIncomplete = isLogIncomplete(nightLog, eqItems);
+                   const logTime = new Date(nightLog.timestamp);
+                   const logHour = logTime.getHours() + logTime.getMinutes() / 60;
+                   const isLate = logHour < nightStartH || logHour > nightEndH;
+                   const isFailed = nightLog.status === 'failed' || nightLog.status === 'needs_attention';
+
+                   if (isIncomplete) {
+                     deficiencies.push({
+                       eq,
+                       shift: 'NIGHT',
+                       type: 'incomplete',
+                       label: '⚠️ ตรวจกะดึกไม่ครบหัวข้อ',
+                       time: format(nightLog.timestamp, 'HH:mm น.'),
+                       leader: nightLeader,
+                       assistants: nightAssistants,
+                       color: 'text-amber-750 bg-amber-50/70',
+                       borderColor: 'border-amber-200'
+                     });
+                   } else if (isLate) {
+                     deficiencies.push({
+                       eq,
+                       shift: 'NIGHT',
+                       type: 'late',
+                       label: '⏰ ตรวจกะดึกล่าช้าเกินช่วงเวลา',
+                       time: format(nightLog.timestamp, 'HH:mm น.'),
+                       leader: nightLeader,
+                       assistants: nightAssistants,
+                       color: 'text-amber-700 bg-amber-50/70',
+                       borderColor: 'border-amber-200'
+                     });
+                   } else if (isFailed) {
+                     deficiencies.push({
+                       eq,
+                       shift: 'NIGHT',
+                       type: 'failed',
+                       label: '🔴 อุปกรณ์พบพารามิเตอร์ผิดปกติ (Failed Spec)',
+                       time: format(nightLog.timestamp, 'HH:mm น.'),
+                       leader: nightLeader,
+                       assistants: nightAssistants,
+                       color: 'text-rose-700 bg-rose-50/70',
+                       borderColor: 'border-rose-200'
+                     });
+                   }
+                 }
+               });
+
+               // Generate 10-day dates range ending on dashboardDate
+               const datesRange: string[] = [];
+               for (let i = 9; i >= 0; i--) {
+                  const d = new Date(dashboardDate);
+                  d.setDate(d.getDate() - i);
+                  datesRange.push(format(d, 'yyyy-MM-dd'));
+               }
+
+               // helper to format hours into HH:mm
+               const getHourString = (fh: number): string => {
+                 const h = Math.floor(fh);
+                 const m = Math.round((fh - h) * 60);
+                 return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+               };
+
+               // Custom Y coordinate mappers for parallel, non-overlapping shift tracks
+               // Day Shift Track: 8.0 น. to 12.0 น. maps to Y range [40, 120] (top of Day track to bottom of Day track)
+               const getDayY = (hour: number) => {
+                 const clampedHour = Math.max(8.0, Math.min(12.0, hour));
+                 return 40 + ((clampedHour - 8.0) / (12.0 - 8.0)) * 80;
+               };
+
+               // Night Shift Track: 20.0 น. to 24.0 น. maps to Y range [160, 240] (top of Night track to bottom of Night track)
+               const getNightY = (hour: number) => {
+                 let adjustedHour = hour;
+                 // If the check hour is in the early morning (e.g. 0:00 to 8:00), treat it as 24 + hour
+                 if (hour >= 0 && hour < 8) {
+                   adjustedHour = hour + 24;
+                 }
+                 const clampedHour = Math.max(20.0, Math.min(24.0, adjustedHour));
+                 return 160 + ((clampedHour - 20.0) / (24.0 - 20.0)) * 80;
+               };
+
+               const trendPoints = datesRange.map((dateStr, index) => {
+                  const dateLogs = trendLogs.filter(l => l.dateKey === dateStr);
+                  const dayLogsOnDate = dateLogs.filter(l => l.shift === 'DAY');
+                  const nightLogsOnDate = dateLogs.filter(l => l.shift === 'NIGHT');
+
+                  // Day shift average check hour
+                  const dayCheckHours = dayLogsOnDate.map(l => {
+                    const d = new Date(l.timestamp);
+                    return d.getHours() + d.getMinutes() / 60;
+                  });
+                  const dayAvgHour = dayCheckHours.length > 0 ? dayCheckHours.reduce((a, b) => a + b, 0) / dayCheckHours.length : null;
+                  const dayStatusInfo = getShiftStatusInfo('DAY', dateLogs, activeEqs.length, timeSettings, dateStr);
+
+                  // Night shift average check hour
+                  const nightCheckHours = nightLogsOnDate.map(l => {
+                    const d = new Date(l.timestamp);
+                    return d.getHours() + d.getMinutes() / 60;
+                  });
+                  const nightAvgHour = nightCheckHours.length > 0 ? nightCheckHours.reduce((a, b) => a + b, 0) / nightCheckHours.length : null;
+                  const nightStatusInfo = getShiftStatusInfo('NIGHT', dateLogs, activeEqs.length, timeSettings, dateStr);
+
+                  // X-axis mapping: padding-left of 70px, width of 660px spanning index 0 to 9
+                  const x = 70 + (index / 9) * 660;
+
+                  return {
+                     dateStr,
+                     x,
+                     dayAvgHour,
+                     dayY: dayAvgHour !== null ? getDayY(dayAvgHour) : null,
+                     dayStatusInfo,
+                     nightAvgHour,
+                     nightY: nightAvgHour !== null ? getNightY(nightAvgHour) : null,
+                     nightStatusInfo
+                  };
+               });
+
+               // Generate vertical ticks for each of the 10 dates
+               const dateTicks = trendPoints.map((p, idx) => (
+                  <g key={`dtick-${idx}`}>
+                     <line x1={p.x} y1={40} x2={p.x} y2={290} stroke="#E2E8F0" strokeWidth={1} strokeDasharray="2 3" />
+                  </g>
+               ));
+
+               // Custom Y-axis ticks with right alignment for double tracks
+               const hourTicks = [
+                 { y: getDayY(8.0), label: '08:00 น.', isBold: true, color: '#F59E0B' },
+                 { y: getDayY(10.0), label: '10:00 น.', isBold: false, color: '#94A3B8' },
+                 { y: getDayY(12.0), label: '12:00 น. (เที่ยง)', isBold: true, color: '#EF4444' }, // Bottom boundary for day shift
+
+                 { y: getNightY(20.0), label: '20:00 น.', isBold: true, color: '#6366F1' },
+                 { y: getNightY(22.0), label: '22:00 น.', isBold: false, color: '#94A3B8' },
+                 { y: getNightY(24.0), label: '24:00 น. (เที่ยงคืน)', isBold: true, color: '#4F46E5' }
+               ].map((tick, idx) => (
+                 <g key={`htick-${idx}`}>
+                    <line 
+                      x1={70} 
+                      y1={tick.y} 
+                      x2={730} 
+                      y2={tick.y} 
+                      stroke={tick.isBold ? '#E2E8F0' : '#F1F5F9'} 
+                      strokeWidth={tick.isBold ? 1.5 : 1} 
+                    />
+                    <text 
+                      x={62} 
+                      y={tick.y + 3.5} 
+                      textAnchor="end"
+                      className={cn(
+                        "text-[10px] font-sans font-bold fill-slate-500",
+                        tick.isBold && "font-black text-slate-700"
+                      )}
+                    >
+                       {tick.label}
+                    </text>
+                 </g>
+               ));
+
+               // Draw trend paths
+               const dayPointsPath = trendPoints
+                 .filter(p => p.dayY !== null)
+                 .map(p => `${p.x},${p.dayY}`)
+                 .join(' ');
+
+               const nightPointsPath = trendPoints
+                 .filter(p => p.nightY !== null)
+                 .map(p => `${p.x},${p.nightY}`)
+                 .join(' ');
+
+               const dayYStart = getDayY(dayStartH);
+               const dayYEnd = getDayY(dayEndH);
+               const nightYStart = getNightY(nightStartH);
+               const nightYEnd = getNightY(nightEndH);
+
+               return (
+                  <div className="bg-white border border-slate-200 rounded-3xl p-6 sm:p-8 space-y-6 shadow-sm overflow-hidden relative">
+                     <div className="absolute top-0 right-0 w-[300px] h-[300px] bg-indigo-500/5 rounded-full blur-[80px] -translate-y-1/2 translate-x-1/3 pointer-events-none"></div>
+                     
+                     <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+                        <div>
+                           <span className="text-[9px] font-black text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded border border-indigo-100 uppercase tracking-widest">
+                              Historical Trend Chart
+                           </span>
+                           <h3 className="text-xl font-black text-slate-800 font-display mt-1.5">
+                              📈 กราฟควบคุมแนวโน้มการตรวจสอบประจำวัน (Daily Trend Control Chart)
+                           </h3>
+                           <p className="text-xs text-slate-400 font-medium">
+                              มอนิเตอร์เวลาสแกนตรวจเช็กค่าเฉลี่ยรายวัน ย้อนหลัง 10 วัน เทียบกับช่วงเวลาควบคุมสำหรับกะเช้า (🌞) และกะดึก (🌙)
+                           </p>
+                        </div>
+                        
+                        {/* Summary Legend */}
+                        <div className="flex flex-wrap gap-3.5 text-[11px] font-extrabold">
+                           <div className="flex items-center gap-1.5">
+                              <span className="w-4 h-2 bg-amber-500/20 border-t border-b border-amber-400 block"></span>
+                              <span className="text-slate-500">ช่วงกะเช้า (DAY Window)</span>
+                           </div>
+                           <div className="flex items-center gap-1.5">
+                              <span className="w-4 h-2 bg-indigo-500/20 border-t border-b border-indigo-400 block"></span>
+                              <span className="text-slate-500">ช่วงกะดึก (NIGHT Window)</span>
+                           </div>
+                           <div className="flex items-center gap-1.5">
+                              <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 block"></span>
+                              <span className="text-slate-600">ผ่านเกณฑ์</span>
+                           </div>
+                           <div className="flex items-center gap-1.5">
+                              <span className="w-2.5 h-2.5 rounded-full bg-amber-500 block"></span>
+                              <span className="text-slate-600">เลยเวลา</span>
+                           </div>
+                           <div className="flex items-center gap-1.5">
+                              <span className="w-2.5 h-2.5 rounded-full bg-red-500 block"></span>
+                              <span className="text-slate-600">ค้างตรวจ</span>
+                           </div>
+                        </div>
+                     </div>
+
+                      {/* SVG GRAPH CONTAINER */}
+                      <div className="w-full overflow-x-auto custom-scrollbar border border-slate-100 rounded-2xl p-4 bg-slate-50/50">
+                         <div className="min-w-[780px]">
+                            <svg viewBox="0 0 780 325" className="w-full h-auto overflow-visible select-none">
+                               {/* Y-Axis Hour Gridlines */}
+                               {hourTicks}
+
+                               {/* Vertical Date Gridlines */}
+                               {dateTicks}
+
+                               {/* Highlighted Control Windows (Horizontal bands) */}
+                               {/* Day Shift Window: from dayYStart down to dayYEnd */}
+                               <rect x={70} y={dayYStart} width={660} height={dayYEnd - dayYStart} fill="#F59E0B" fillOpacity={0.06} stroke="#F59E0B" strokeWidth={1} strokeDasharray="2 3" />
+                               <text x={75} y={dayYStart - 4} className="text-[9px] font-black fill-amber-600 tracking-wider">
+                                  ช่วงเวลาควบคุมกะเช้า: {timeSettings.dayStart} - {timeSettings.dayEnd} น.
+                               </text>
+
+                               {/* Night Shift Window: from nightYStart down to nightYEnd */}
+                               <rect x={70} y={nightYStart} width={660} height={nightYEnd - nightYStart} fill="#6366F1" fillOpacity={0.06} stroke="#6366F1" strokeWidth={1} strokeDasharray="2 3" />
+                               <text x={75} y={nightYStart - 4} className="text-[9px] font-black fill-indigo-600 tracking-wider">
+                                  ช่วงเวลาควบคุมกะดึก: {timeSettings.nightStart} - {timeSettings.nightEnd} น.
+                               </text>
+
+                               {/* Plot Trend Polylines */}
+                               {dayPointsPath && (
+                                  <polyline points={dayPointsPath} fill="none" stroke="#F59E0B" strokeWidth={2.5} opacity={0.8} />
+                                )}
+                               {nightPointsPath && (
+                                  <polyline points={nightPointsPath} fill="none" stroke="#6366F1" strokeWidth={2.5} opacity={0.8} />
+                                )}
+
+                               {/* Day Shift Plot Points (Dots) */}
+                               {trendPoints.map((p, idx) => {
+                                  const isOut = p.dayStatusInfo.status === 'late_complete' || p.dayStatusInfo.status === 'overdue';
+                                  const isPerfect = p.dayStatusInfo.status === 'perfect';
+                                  const leaderName = getShiftLeaderForDate(p.dateStr, 'DAY', operators);
+
+                                  if (p.dayY === null) {
+                                     // Plot a red cross on the horizontal line of Day Shift center if overdue/incomplete
+                                     const fallbackY = getDayY((dayStartH + dayEndH) / 2);
+                                     return (
+                                        <g key={`day-empty-${idx}`}>
+                                           <title>{`กะเช้าวันที่ ${p.dateStr}\nสถานะกะ: ยังไม่มีการเข้าตรวจ (ค้างสแกนตรวจ)`}</title>
+                                           <circle cx={p.x} cy={fallbackY} r={5} fill="none" stroke="#EF4444" strokeWidth={1} strokeDasharray="1.5 1.5" />
+                                           <circle cx={p.x} cy={fallbackY} r={3} fill="#EF4444" stroke="#FFFFFF" strokeWidth={1} className="drop-shadow-sm" />
+                                           <line x1={p.x - 1} y1={fallbackY - 1} x2={p.x + 1} y2={fallbackY + 1} stroke="#FFFFFF" strokeWidth={0.75} strokeLinecap="round" />
+                                           <line x1={p.x + 1} y1={fallbackY - 1} x2={p.x - 1} y2={fallbackY + 1} stroke="#FFFFFF" strokeWidth={0.75} strokeLinecap="round" />
+
+                                           {/* Direct Leader name displayed above the red overdue cross */}
+                                           <rect x={p.x - 24} y={fallbackY - 21} width={48} height={11} rx={3} fill="#FEF2F2" stroke="#FCA5A5" strokeWidth={0.75} />
+                                           <text x={p.x} y={fallbackY - 13} textAnchor="middle" className="text-[7px] font-sans font-black fill-red-700">
+                                              ผก. {leaderName.split(' ')[0]}
+                                           </text>
+                                        </g>
+                                     );
+                                  }
+                                  return (
+                                     <g key={`day-point-${idx}`}>
+                                        <title>{`กะเช้าวันที่ ${p.dateStr}\nเวลาตรวจจริงเฉลี่ย: ${getHourString(p.dayAvgHour!)} น. ${p.dayAvgHour! > 12 ? '(เกินเที่ยง - ติดขอบล่าง)' : ''}\nสถานะกะ: ${p.dayStatusInfo.statusText}`}</title>
+                                        
+                                        {isPerfect ? (
+                                           // 🟢 Perfect: Clean emerald green circle with check icon
+                                           <>
+                                              <circle cx={p.x} cy={p.dayY} r={4.5} fill="none" stroke="#10B981" strokeWidth={1} opacity={0.2} />
+                                              <circle cx={p.x} cy={p.dayY} r={2.5} fill="#10B981" stroke="#FFFFFF" strokeWidth={1} className="drop-shadow-xs" />
+                                           </>
+                                        ) : p.dayStatusInfo.status === 'late_complete' ? (
+                                           // 🟠 Warning (Late / Out of window): Large contrasting marker with double border
+                                           <>
+                                              <circle cx={p.x} cy={p.dayY} r={5} fill="none" stroke="#F59E0B" strokeWidth={1} opacity={0.3} className="animate-pulse" />
+                                              <circle cx={p.x} cy={p.dayY} r={3} fill="#F59E0B" stroke="#FFFFFF" strokeWidth={1} className="drop-shadow-xs cursor-help" />
+                                              <text x={p.x} y={p.dayY + 1} textAnchor="middle" className="text-[6.5px] font-sans font-black fill-white">!</text>
+                                           </>
+                                        ) : (
+                                           // 🔴 Incomplete/Overdue: Red dot with cross '✗'
+                                           <>
+                                              <circle cx={p.x} cy={p.dayY} r={5} fill="none" stroke="#EF4444" strokeWidth={1} opacity={0.3} className="animate-pulse" />
+                                              <circle cx={p.x} cy={p.dayY} r={3} fill="#EF4444" stroke="#FFFFFF" strokeWidth={1} className="drop-shadow-xs cursor-help" />
+                                              <line x1={p.x - 1} y1={p.dayY - 1} x2={p.x + 1} y2={p.dayY + 1} stroke="#FFFFFF" strokeWidth={0.75} strokeLinecap="round" />
+                                              <line x1={p.x + 1} y1={p.dayY - 1} x2={p.x - 1} y2={p.dayY + 1} stroke="#FFFFFF" strokeWidth={0.75} strokeLinecap="round" />
+                                           </>
+                                        )}
+
+                                        <text x={p.x} y={p.dayY - 7} textAnchor="middle" className="text-[7px] font-mono font-black fill-slate-500">
+                                           {getHourString(p.dayAvgHour!)}
+                                        </text>
+
+                                        {/* Direct Leader Name for late/overdue points */}
+                                        {isOut && (
+                                           <g>
+                                              <rect x={p.x - 24} y={p.dayY + 8} width={48} height={11} rx={3} fill="#FFFBEB" stroke="#FDE68A" strokeWidth={0.75} />
+                                              <text x={p.x} y={p.dayY + 16} textAnchor="middle" className="text-[7px] font-sans font-black fill-amber-800">
+                                                 ผก. {leaderName.split(' ')[0]}
+                                              </text>
+                                           </g>
+                                        )}
+                                     </g>
+                                  );
+                                })}
+
+                               {/* Night Shift Plot Points (Dots) */}
+                               {trendPoints.map((p, idx) => {
+                                  const isOut = p.nightStatusInfo.status === 'late_complete' || p.nightStatusInfo.status === 'overdue';
+                                  const isPerfect = p.nightStatusInfo.status === 'perfect';
+                                  const leaderName = getShiftLeaderForDate(p.dateStr, 'NIGHT', operators);
+
+                                  if (p.nightY === null) {
+                                     // Plot a red cross on the horizontal line of Night Shift center if overdue/incomplete
+                                     const fallbackY = getNightY((nightStartH + nightEndH) / 2);
+                                     return (
+                                        <g key={`night-empty-${idx}`}>
+                                           <title>{`กะดึกวันที่ ${p.dateStr}\nสถานะกะ: ยังไม่มีการเข้าตรวจ (ค้างสแกนตรวจ)`}</title>
+                                           <circle cx={p.x} cy={fallbackY} r={5} fill="none" stroke="#EF4444" strokeWidth={1} strokeDasharray="1.5 1.5" />
+                                           <circle cx={p.x} cy={fallbackY} r={3} fill="#EF4444" stroke="#FFFFFF" strokeWidth={1} className="drop-shadow-sm" />
+                                           <line x1={p.x - 1} y1={fallbackY - 1} x2={p.x + 1} y2={fallbackY + 1} stroke="#FFFFFF" strokeWidth={0.75} strokeLinecap="round" />
+                                           <line x1={p.x + 1} y1={fallbackY - 1} x2={p.x - 1} y2={fallbackY + 1} stroke="#FFFFFF" strokeWidth={0.75} strokeLinecap="round" />
+
+                                           {/* Direct Leader name displayed below the red overdue cross */}
+                                           <rect x={p.x - 24} y={fallbackY + 10} width={48} height={11} rx={3} fill="#FEF2F2" stroke="#FCA5A5" strokeWidth={0.75} />
+                                           <text x={p.x} y={fallbackY + 18} textAnchor="middle" className="text-[7px] font-sans font-black fill-red-700">
+                                              ผก. {leaderName.split(' ')[0]}
+                                           </text>
+                                        </g>
+                                     );
+                                  }
+                                  return (
+                                     <g key={`night-point-${idx}`}>
+                                        <title>{`กะดึกวันที่ ${p.dateStr}\nเวลาตรวจจริงเฉลี่ย: ${getHourString(p.nightAvgHour!)} น. ${(p.nightAvgHour! < 20 && p.nightAvgHour! >= 8) ? '(เกินเที่ยงคืน)' : ''}\nสถานะกะ: ${p.nightStatusInfo.statusText}`}</title>
+                                        
+                                        {isPerfect ? (
+                                           // 🟢 Perfect: Clean emerald green circle with check icon
+                                           <>
+                                              <circle cx={p.x} cy={p.nightY} r={4.5} fill="none" stroke="#10B981" strokeWidth={1} opacity={0.2} />
+                                              <circle cx={p.x} cy={p.nightY} r={2.5} fill="#10B981" stroke="#FFFFFF" strokeWidth={1} className="drop-shadow-xs" />
+                                           </>
+                                        ) : p.nightStatusInfo.status === 'late_complete' ? (
+                                           // 🟠 Warning (Late Complete): Orange dot with '!'
+                                           <>
+                                              <circle cx={p.x} cy={p.nightY} r={5} fill="none" stroke="#F59E0B" strokeWidth={1} opacity={0.3} className="animate-pulse" />
+                                              <circle cx={p.x} cy={p.nightY} r={3} fill="#F59E0B" stroke="#FFFFFF" strokeWidth={1} className="drop-shadow-xs cursor-help" />
+                                              <text x={p.x} y={p.nightY + 1} textAnchor="middle" className="text-[6.5px] font-sans font-black fill-white">!</text>
+                                           </>
+                                        ) : (
+                                           // 🔴 Incomplete/Overdue: Red dot with cross '✗'
+                                           <>
+                                              <circle cx={p.x} cy={p.nightY} r={5} fill="none" stroke="#EF4444" strokeWidth={1} opacity={0.3} className="animate-pulse" />
+                                              <circle cx={p.x} cy={p.nightY} r={3} fill="#EF4444" stroke="#FFFFFF" strokeWidth={1} className="drop-shadow-xs cursor-help" />
+                                              <line x1={p.x - 1} y1={p.nightY - 1} x2={p.x + 1} y2={p.nightY + 1} stroke="#FFFFFF" strokeWidth={0.75} strokeLinecap="round" />
+                                              <line x1={p.x + 1} y1={p.nightY - 1} x2={p.x - 1} y2={p.nightY + 1} stroke="#FFFFFF" strokeWidth={0.75} strokeLinecap="round" />
+                                           </>
+                                        )}
+
+                                        <text x={p.x} y={p.nightY - 7} textAnchor="middle" className="text-[7px] font-mono font-black fill-slate-500">
+                                           {getHourString(p.nightAvgHour!)}
+                                        </text>
+
+                                        {/* Direct Leader Name for late/overdue points */}
+                                        {isOut && (
+                                           <g>
+                                              <rect x={p.x - 24} y={p.nightY + 8} width={48} height={11} rx={3} fill="#FFFBEB" stroke="#FDE68A" strokeWidth={0.75} />
+                                              <text x={p.x} y={p.nightY + 16} textAnchor="middle" className="text-[7px] font-sans font-black fill-amber-800">
+                                                 ผก. {leaderName.split(' ')[0]}
+                                              </text>
+                                           </g>
+                                        )}
+                                     </g>
+                                  );
+                                })}
+
+                               {/* X-Axis Base Line - shifted down to 290 */}
+                               <line x1={70} y1={290} x2={730} y2={290} stroke="#94A3B8" strokeWidth={2} />
+
+                               {/* X-Axis Date Labels - shifted down to 310 */}
+                               {trendPoints.map((p, idx) => (
+                                  <g key={`label-${idx}`}>
+                                     <line x1={p.x} y1={290} x2={p.x} y2={296} stroke="#94A3B8" strokeWidth={2} />
+                                     <text x={p.x} y={310} textAnchor="middle" className="text-[10px] font-sans font-black fill-slate-700">
+                                        {(() => {
+                                           const parts = p.dateStr.split('-');
+                                           const months = ['ม.ค.', 'ก.พ.', 'มี.ค.', 'เม.ย.', 'พ.ค.', 'มิ.ย.', 'ก.ค.', 'ส.ค.', 'ก.ย.', 'ต.ค.', 'พ.ย.', 'ธ.ค.'];
+                                           const mIdx = Number(parts[1]) - 1;
+                                           return `${parts[2]} ${months[mIdx]}`;
+                                        })()}
+                                     </text>
+                                  </g>
+                               ))}
+                            </svg>
+                         </div>
+                      </div>
+
+                      {/* LEGEND & GUIDELINES EXPLANATION BLOCK */}
+                      <div className="bg-slate-50 border border-slate-200/80 rounded-2xl p-4 mt-4 space-y-3 relative z-10">
+                         <h4 className="text-xs font-black text-slate-800 uppercase tracking-widest flex items-center gap-1.5 border-b border-slate-200/50 pb-2">
+                            <Info className="w-3.5 h-3.5 text-indigo-500" />
+                            คำอธิบายความหมายและสีของจุดตรวจควบคุม (Chart Legend & Symbol Guide)
+                         </h4>
+                         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                            <div className="flex items-start gap-2.5">
+                               <div className="w-6 h-6 rounded-lg bg-emerald-100 border border-emerald-200 flex items-center justify-center font-black text-emerald-700 shrink-0 text-xs">
+                                  ✓
+                               </div>
+                               <div>
+                                  <p className="text-xs font-black text-slate-800 leading-snug">🟢 ตรวจครบตรงเวลา (On-Time Complete)</p>
+                                  <p className="text-[11px] text-slate-500 mt-0.5 leading-snug font-medium">ตรวจเช็กอุปกรณ์สอดคล้องครบถ้วน 100% ภายในหน้าต่างเวลาควบคุมกะการทำงาน (เช้า {timeSettings.dayStart} - {timeSettings.dayEnd} น. หรือ ดึก {timeSettings.nightStart} - {timeSettings.nightEnd} น.)</p>
+                               </div>
+                            </div>
+                            <div className="flex items-start gap-2.5">
+                               <div className="w-6 h-6 rounded-lg bg-amber-100 border border-amber-200 flex items-center justify-center font-black text-amber-700 shrink-0 text-xs">
+                                  !
+                               </div>
+                               <div>
+                                  <p className="text-xs font-black text-slate-800 leading-snug">🟡 ตรวจครบแต่ช้า (Late Complete)</p>
+                                  <p className="text-[11px] text-slate-500 mt-0.5 leading-snug font-medium">ตรวจอุปกรณ์ครบทุกเครื่อง แต่ลงเวลาสแกนตรวจเลยเวลาควบคุมกะการทำงาน ถือว่าปฏิบัติงานเสร็จสิ้นแต่ล่าช้าสะสม</p>
+                               </div>
+                            </div>
+                            <div className="flex items-start gap-2.5">
+                               <div className="w-6 h-6 rounded-lg bg-red-100 border border-red-200 flex items-center justify-center font-black text-red-700 shrink-0 text-xs">
+                                  ✗
+                               </div>
+                               <div>
+                                  <p className="text-xs font-black text-slate-800 leading-snug">🔴 ค้างตรวจตกหล่น (Overdue / Missed)</p>
+                                  <p className="text-[11px] text-slate-500 mt-0.5 leading-snug font-medium">ค้างตรวจสแกนโดยไม่มีการเข้าบันทึกสถานะ หรือไม่มีบันทึกสแตนบายจนกระทั่งหมดกะ ถือเป็นข้อบกพร่องสะสมที่ต้องชี้แจง</p>
+                               </div>
+                            </div>
+                         </div>
+                      </div>
+
+                     {/* DELINQUENCY & DIRECT ACCOUNTABILITY REPORT PANEL */}
+                     <div className="pt-4 border-t border-slate-100">
+                        <h4 className="text-sm font-black text-slate-800 uppercase tracking-wider flex items-center gap-2 mb-4">
+                           <span className="w-2.5 h-2.5 rounded-full bg-red-500 animate-pulse"></span>
+                           🚨 ตารางติดตามข้อบกพร่องกะการทำงานและผู้รับผิดชอบหลัก (Roster Penalties & Active Accountability Board)
+                        </h4>
+
+                        {deficiencies.length === 0 ? (
+                           <div className="p-6 text-center text-emerald-700 bg-emerald-50/50 border border-emerald-100 rounded-2xl flex flex-col items-center justify-center">
+                              <p className="font-black text-sm">🟢 ดีเยี่ยม! ไม่พบพฤติกรรมล่าช้าหรือการค้างสแกนตรวจเครื่องจักรในวันนี้</p>
+                              <p className="text-[11px] font-bold text-emerald-600 mt-1">หัวหน้ากะทำงานทุกคนบริหารเวลาควบคุมพารามิเตอร์ได้อย่างยอดเยี่ยมและเคร่งครัด</p>
+                           </div>
+                        ) : (
+                           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                              {deficiencies.map((def, idx) => (
+                                 <div key={idx} className={cn("p-4 border rounded-2xl flex flex-col justify-between hover:shadow-md transition-all", def.color, def.borderColor)}>
+                                    <div>
+                                       <div className="flex justify-between items-start gap-1.5">
+                                          <div>
+                                             <h5 className="font-extrabold text-sm text-slate-900 leading-snug">{def.eq.name}</h5>
+                                             <p className="text-[10px] text-slate-500 font-mono font-bold mt-0.5">{def.eq.code} · {def.eq.location}</p>
+                                          </div>
+                                          <span className="text-[9px] font-black px-2 py-0.5 rounded uppercase border border-current shrink-0">
+                                             {def.shift === 'DAY' ? '🌞 กะเช้า' : '🌙 กะดึก'}
+                                          </span>
+                                       </div>
+
+                                       <div className="mt-3.5 space-y-1.5 border-t border-slate-200/50 pt-3">
+                                          <p className="text-[11px] font-black flex items-center justify-between text-slate-800">
+                                             <span>สถานะบกพร่อง:</span>
+                                             <span className="font-bold underline">{def.label}</span>
+                                          </p>
+                                          <p className="text-[11px] font-semibold flex items-center justify-between text-slate-500">
+                                             <span>เวลาบันทึกจริง:</span>
+                                             <span className="font-mono font-bold text-slate-800">{def.time}</span>
+                                          </p>
+                                       </div>
+                                    </div>
+
+                                    {/* Direct Shift Leader Name displayed directly, holding them accountable! */}
+                                    <div className="mt-4 pt-3 border-t border-slate-200/60 bg-white/50 p-2.5 rounded-xl border border-dashed border-slate-200">
+                                       <p className="text-[9px] font-extrabold text-rose-800 uppercase tracking-widest leading-none mb-1">
+                                          หัวหน้ากะผู้รับผิดชอบ (Hold Accountable)
+                                       </p>
+                                       <p className="text-xs font-black text-slate-900">{def.leader.split(' ')[0]}</p>
+                                       <p className="text-[9px] text-slate-500 font-bold mt-1">
+                                          <span className="font-black text-slate-400">ผู้ช่วยสนับสนุน:</span> {def.assistants.split(',').map(name => name.trim().split(' ')[0]).join(', ')}
+                                       </p>
+                                       <div className="mt-2 text-[9px] text-rose-700 bg-rose-50 border border-rose-100 p-1 rounded font-black text-center uppercase">
+                                          ⚠️ ปฏิบัติงานล่าช้า/บกพร่อง - ต้องชี้แจงผู้จัดการ
+                                       </div>
+                                    </div>
+                                 </div>
+                              ))}
+                           </div>
+                        )}
+                     </div>
+                  </div>
+               );
+            })()}
+
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                {/* 1. DAY SHIFT KPI STATUS CARD */}
                {(() => {
                   const activeEqs = equipments.filter(e => e.status === 'active');
-                  const dayLeader = operators.find(op => op.role === 'shift_leader' && op.shift === 'DAY')?.name || 'Sarah Connor';
+                  const dayLeader = getShiftLeaderForDate(dashboardDate, 'DAY', operators);
+                  const dayAssistants = getAssistantsForDate(dashboardDate, 'DAY', operators);
                   const dayLogs = logs.filter(l => l.shift === 'DAY');
                   const dayChecked = activeEqs.filter(eq => dayLogs.some(l => l.equipmentId === eq.id)).length;
                   const dayPending = activeEqs.length - dayChecked;
@@ -1167,19 +2027,25 @@ export default function Dashboard({ selectedDept = 'all' }: { selectedDept?: str
                         </div>
 
                         {/* Shift Leader Info with accountability layout */}
-                        <div className="p-4 bg-slate-50 rounded-2xl border border-slate-200/50 flex justify-between items-center mb-5">
-                           <div className="flex items-center gap-2.5">
-                              <div className="w-10 h-10 bg-indigo-50 border border-indigo-100 rounded-xl flex items-center justify-center font-extrabold text-indigo-600 text-sm">
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-5">
+                           <div className="p-3 bg-slate-50 rounded-2xl border border-slate-200/50 flex items-center gap-2.5">
+                              <div className="w-8 h-8 bg-indigo-50 border border-indigo-100 rounded-lg flex items-center justify-center font-extrabold text-indigo-600 text-sm shrink-0">
                                  ⭐
                               </div>
-                              <div>
-                                 <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider leading-none">Shift Leader ประจำกะ</p>
-                                 <p className="text-sm font-black text-slate-800 mt-1">{dayLeader}</p>
+                              <div className="min-w-0">
+                                 <p className="text-[9px] font-bold text-slate-400 uppercase tracking-wider leading-none">Shift Leader ประจำกะ</p>
+                                 <p className="text-xs font-black text-slate-800 mt-1 truncate">{dayLeader.split(' ')[0]}</p>
                               </div>
                            </div>
-                           <span className="px-2 py-0.5 text-[9px] font-black uppercase text-indigo-700 bg-indigo-50 border border-indigo-100 rounded">
-                              ผู้รับผิดชอบกะ
-                           </span>
+                           <div className="p-3 bg-slate-50 rounded-2xl border border-slate-200/50 flex items-center gap-2.5">
+                              <div className="w-8 h-8 bg-sky-50 border border-sky-100 rounded-lg flex items-center justify-center font-extrabold text-sky-600 text-sm shrink-0">
+                                 👥
+                              </div>
+                              <div className="min-w-0">
+                                 <p className="text-[9px] font-bold text-slate-400 uppercase tracking-wider leading-none">ผู้ช่วยสนับสนุน (4-2)</p>
+                                 <p className="text-xs font-black text-slate-800 mt-1 truncate" title={dayAssistants}>{dayAssistants.split(',').map(name => name.trim().split(' ')[0]).join(', ')}</p>
+                              </div>
+                           </div>
                         </div>
 
                         {/* Stats Dashboard Grid */}
@@ -1208,7 +2074,8 @@ export default function Dashboard({ selectedDept = 'all' }: { selectedDept?: str
                {/* 2. NIGHT SHIFT KPI STATUS CARD */}
                {(() => {
                   const activeEqs = equipments.filter(e => e.status === 'active');
-                  const nightLeader = operators.find(op => op.role === 'shift_leader' && op.shift === 'NIGHT')?.name || 'Tony Stark';
+                  const nightLeader = getShiftLeaderForDate(dashboardDate, 'NIGHT', operators);
+                  const nightAssistants = getAssistantsForDate(dashboardDate, 'NIGHT', operators);
                   const nightLogs = logs.filter(l => l.shift === 'NIGHT');
                   const nightChecked = activeEqs.filter(eq => nightLogs.some(l => l.equipmentId === eq.id)).length;
                   const nightPending = activeEqs.length - nightChecked;
@@ -1255,19 +2122,25 @@ export default function Dashboard({ selectedDept = 'all' }: { selectedDept?: str
                         </div>
 
                         {/* Shift Leader Info with accountability layout */}
-                        <div className="p-4 bg-slate-50 rounded-2xl border border-slate-200/50 flex justify-between items-center mb-5">
-                           <div className="flex items-center gap-2.5">
-                              <div className="w-10 h-10 bg-indigo-50 border border-indigo-100 rounded-xl flex items-center justify-center font-extrabold text-indigo-600 text-sm">
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-5">
+                           <div className="p-3 bg-slate-50 rounded-2xl border border-slate-200/50 flex items-center gap-2.5">
+                              <div className="w-8 h-8 bg-indigo-50 border border-indigo-100 rounded-lg flex items-center justify-center font-extrabold text-indigo-600 text-sm shrink-0">
                                  ⭐
                               </div>
-                              <div>
-                                 <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider leading-none">Shift Leader ประจำกะ</p>
-                                 <p className="text-sm font-black text-slate-800 mt-1">{nightLeader}</p>
+                              <div className="min-w-0">
+                                 <p className="text-[9px] font-bold text-slate-400 uppercase tracking-wider leading-none">Shift Leader ประจำกะ</p>
+                                 <p className="text-xs font-black text-slate-800 mt-1 truncate">{nightLeader.split(' ')[0]}</p>
                               </div>
                            </div>
-                           <span className="px-2 py-0.5 text-[9px] font-black uppercase text-indigo-700 bg-indigo-50 border border-indigo-100 rounded">
-                              ผู้รับผิดชอบกะ
-                           </span>
+                           <div className="p-3 bg-slate-50 rounded-2xl border border-slate-200/50 flex items-center gap-2.5">
+                              <div className="w-8 h-8 bg-sky-50 border border-sky-100 rounded-lg flex items-center justify-center font-extrabold text-sky-600 text-sm shrink-0">
+                                 👥
+                              </div>
+                              <div className="min-w-0">
+                                 <p className="text-[9px] font-bold text-slate-400 uppercase tracking-wider leading-none">ผู้ช่วยสนับสนุน (4-2)</p>
+                                 <p className="text-xs font-black text-slate-800 mt-1 truncate" title={nightAssistants}>{nightAssistants.split(',').map(name => name.trim().split(' ')[0]).join(', ')}</p>
+                              </div>
+                           </div>
                         </div>
 
                         {/* Stats Dashboard Grid */}
@@ -1293,6 +2166,374 @@ export default function Dashboard({ selectedDept = 'all' }: { selectedDept?: str
                   );
                })()}
             </div>
+
+            {/* 1-MONTH COMPREHENSIVE COMPLIANCE AUDIT & CSV EXPORT PANEL */}
+            {(() => {
+               const auditReportData = (() => {
+                  const range = [];
+                  const activeEqs = equipments.filter(e => e.status === 'active');
+                  const activeCount = activeEqs.length;
+
+                  const parseTimeToHours = (timeStr: string): number => {
+                     if (!timeStr) return 0;
+                     const [h, m] = timeStr.split(':').map(Number);
+                     return h + m / 60;
+                  };
+
+                  const dayStartH = parseTimeToHours(timeSettings.dayStart);
+                  const dayEndH = parseTimeToHours(timeSettings.dayEnd);
+                  const nightStartH = parseTimeToHours(timeSettings.nightStart);
+                  const nightEndH = parseTimeToHours(timeSettings.nightEnd);
+
+                  // Generate past 30 days
+                  for (let i = 29; i >= 0; i--) {
+                     const d = new Date(dashboardDate);
+                     d.setDate(d.getDate() - i);
+                     const dateStr = format(d, 'yyyy-MM-dd');
+                     const dateDisplayStr = format(d, 'dd MMM yyyy');
+
+                     const dateLogs = trendLogs.filter(l => l.dateKey === dateStr);
+
+                     // Day Shift
+                     const dayLogsOnDate = dateLogs.filter(l => l.shift === 'DAY');
+                     const dayCheckHours = dayLogsOnDate.map(l => {
+                        const logD = new Date(l.timestamp);
+                        return logD.getHours() + logD.getMinutes() / 60;
+                     });
+                     const dayAvgHour = dayCheckHours.length > 0 ? dayCheckHours.reduce((a, b) => a + b, 0) / dayCheckHours.length : null;
+                     const dayStatusInfo = getShiftStatusInfo('DAY', dateLogs, activeCount, timeSettings, dateStr);
+                     const dayLeader = getShiftLeaderForDate(dateStr, 'DAY', operators);
+                     const dayAssistants = getAssistantsForDate(dateStr, 'DAY', operators);
+
+                     let dayLateMinutes = 0;
+                     if (dayAvgHour !== null) {
+                        if (dayAvgHour > dayEndH) {
+                           dayLateMinutes = Math.round((dayAvgHour - dayEndH) * 60);
+                        } else if (dayAvgHour < dayStartH) {
+                           dayLateMinutes = Math.round((dayStartH - dayAvgHour) * 60);
+                        }
+                     }
+
+                     let dayEvaluation = "";
+                     if (dayStatusInfo.status === 'perfect') {
+                        dayEvaluation = "ตรวจได้อยู่ในเวลาครบถ้วนดี";
+                     } else if (dayStatusInfo.status === 'late_complete') {
+                        dayEvaluation = "ตรวจนอกช่วงเวลา (เลยเวลากำหนด)";
+                     } else {
+                        dayEvaluation = "ตรวจนอกช่วงเวลา (ค้างตรวจกะ)";
+                     }
+
+                     range.push({
+                        dateStr,
+                        dateDisplayStr,
+                        shift: 'DAY' as const,
+                        leader: dayLeader,
+                        assistants: dayAssistants,
+                        status: dayStatusInfo.status,
+                        statusText: dayStatusInfo.statusText,
+                        plotColor: dayStatusInfo.plotColor,
+                        avgTimeStr: dayAvgHour !== null ? getHourString(dayAvgHour) : '-',
+                        lateMinutes: dayLateMinutes,
+                        complianceEvaluation: dayEvaluation
+                     });
+
+                     // Night Shift
+                     const nightLogsOnDate = dateLogs.filter(l => l.shift === 'NIGHT');
+                     const nightCheckHours = nightLogsOnDate.map(l => {
+                        const logD = new Date(l.timestamp);
+                        return logD.getHours() + logD.getMinutes() / 60;
+                     });
+                     const nightAvgHour = nightCheckHours.length > 0 ? nightCheckHours.reduce((a, b) => a + b, 0) / nightCheckHours.length : null;
+                     const nightStatusInfo = getShiftStatusInfo('NIGHT', dateLogs, activeCount, timeSettings, dateStr);
+                     const nightLeader = getShiftLeaderForDate(dateStr, 'NIGHT', operators);
+                     const nightAssistants = getAssistantsForDate(dateStr, 'NIGHT', operators);
+
+                     let nightLateMinutes = 0;
+                     if (nightAvgHour !== null) {
+                        let adjustedHour = nightAvgHour;
+                        if (nightAvgHour >= 0 && nightAvgHour < 8) {
+                           adjustedHour = nightAvgHour + 24;
+                        }
+                        if (adjustedHour > nightEndH) {
+                           nightLateMinutes = Math.round((adjustedHour - nightEndH) * 60);
+                        } else if (adjustedHour < nightStartH) {
+                           nightLateMinutes = Math.round((nightStartH - adjustedHour) * 60);
+                        }
+                     }
+
+                     let nightEvaluation = "";
+                     if (nightStatusInfo.status === 'perfect') {
+                        nightEvaluation = "ตรวจได้อยู่ในเวลาครบถ้วนดี";
+                     } else if (nightStatusInfo.status === 'late_complete') {
+                        nightEvaluation = "ตรวจนอกช่วงเวลา (เลยเวลากำหนด)";
+                     } else {
+                        nightEvaluation = "ตรวจนอกช่วงเวลา (ค้างตรวจกะ)";
+                     }
+
+                     range.push({
+                        dateStr,
+                        dateDisplayStr,
+                        shift: 'NIGHT' as const,
+                        leader: nightLeader,
+                        assistants: nightAssistants,
+                        status: nightStatusInfo.status,
+                        statusText: nightStatusInfo.statusText,
+                        plotColor: nightStatusInfo.plotColor,
+                        avgTimeStr: nightAvgHour !== null ? getHourString(nightAvgHour) : '-',
+                        lateMinutes: nightLateMinutes,
+                        complianceEvaluation: nightEvaluation
+                     });
+                  }
+                  return range.sort((a, b) => b.dateStr.localeCompare(a.dateStr));
+               })();
+
+               // Apply Filter & Search Search Leader Name
+               const filteredAuditData = auditReportData.filter(row => {
+                  const matchesSearch = row.leader.toLowerCase().includes(auditSearchLeader.toLowerCase()) || 
+                                       row.assistants.toLowerCase().includes(auditSearchLeader.toLowerCase());
+                  
+                  if (!matchesSearch) return false;
+
+                  if (auditStatusFilter === 'all') return true;
+                  if (auditStatusFilter === 'perfect') return row.status === 'perfect';
+                  if (auditStatusFilter === 'late_complete') return row.status === 'late_complete';
+                  if (auditStatusFilter === 'overdue') return row.status === 'overdue';
+
+                  return true;
+               });
+
+               // Calculate Audit Summary stats for display
+               const totalCount = auditReportData.length;
+               const perfectCount = auditReportData.filter(r => r.status === 'perfect').length;
+               const lateCount = auditReportData.filter(r => r.status === 'late_complete').length;
+               const overdueCount = auditReportData.filter(r => r.status === 'overdue').length;
+               const perfectRate = totalCount === 0 ? 100 : Math.round((perfectCount / totalCount) * 100);
+
+               const handleAuditExportCSV = () => {
+                  const headers = ["วันที่", "กะการทำงาน", "ชื่อหัวหน้ากะ", "ผู้ช่วยสนับสนุน", "สถานะการตรวจสอบ", "ผลประเมินประสิทธิภาพกะ", "เวลาตรวจสอบเฉลี่ย", "ล่าช้า (นาที)"];
+                  const csvRows = filteredAuditData.map(r => [
+                     r.dateStr,
+                     r.shift === 'DAY' ? 'กะกลางวัน (DAY)' : 'กะกลางคืน (NIGHT)',
+                     r.leader,
+                     r.assistants,
+                     r.statusText,
+                     r.complianceEvaluation,
+                     r.avgTimeStr,
+                     r.lateMinutes > 0 ? `${r.lateMinutes} นาที` : '-'
+                  ]);
+                  const csvContent = "\uFEFF" + [headers.join(','), ...csvRows.map(e => e.map(val => `"${String(val).replace(/"/g, '""')}"`).join(','))].join('\n');
+                  const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+                  const url = URL.createObjectURL(blob);
+                  const link = document.createElement("a");
+                  link.setAttribute("href", url);
+                  link.setAttribute("download", `รายงานผู้รับผิดชอบการตรวจสอบย้อนหลัง_30_วัน_${format(new Date(), 'yyyy-MM-dd')}.csv`);
+                  document.body.appendChild(link);
+                  link.click();
+                  document.body.removeChild(link);
+               };
+
+               return (
+                  <div className="bg-white border border-slate-200 rounded-3xl p-6 sm:p-8 space-y-6 shadow-sm relative overflow-hidden">
+                     <div className="absolute top-0 right-0 w-[200px] h-[200px] bg-emerald-500/5 rounded-full blur-[60px] pointer-events-none"></div>
+                     
+                     <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 border-b border-slate-100 pb-4">
+                        <div>
+                           <span className="text-[9px] font-black text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-100 uppercase tracking-widest">
+                              Historical Compliance Audit Center
+                           </span>
+                           <h3 className="text-lg font-black text-slate-800 font-display mt-1">
+                              📅 รายงานสรุปประสิทธิภาพและการตรวจสอบกะย้อนหลัง 30 วัน (1 Month Compliance Audit Roster)
+                           </h3>
+                           <p className="text-xs text-slate-400 font-medium">
+                              สรุปรายชื่อหัวหน้ากะที่ปฏิบัติงานออกนอกช่วงเวลาควบคุม และกะที่ตรงเวลาสมบูรณ์แบบเพื่อการประเมินผล
+                           </p>
+                        </div>
+                        
+                        <button
+                           onClick={handleAuditExportCSV}
+                           className="px-4 py-2 bg-emerald-600 text-white text-xs font-black rounded-xl hover:bg-emerald-700 transition-colors shadow-xs flex items-center gap-2 shrink-0 cursor-pointer animate-pulse"
+                        >
+                           📥 ส่งออกรายงาน CSV (Microsoft Excel)
+                        </button>
+                     </div>
+
+                     {/* Stats Executive Widget Grid */}
+                     <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                        <div className="bg-slate-50 border border-slate-100 rounded-2xl p-4 text-center">
+                           <span className="block text-[10px] font-black text-slate-400 uppercase">รวมช่วงกะที่วิเคราะห์</span>
+                           <span className="text-xl font-black text-slate-800 font-mono mt-1 block">{totalCount} <span className="text-xs font-bold text-slate-400">กะ</span></span>
+                        </div>
+                        <div className="bg-emerald-50/50 border border-emerald-100 rounded-2xl p-4 text-center">
+                           <span className="block text-[10px] font-black text-emerald-600 uppercase">ตรงเวลาสมบูรณ์ (On-Time)</span>
+                           <span className="text-xl font-black text-emerald-700 font-mono mt-1 block">{perfectCount} <span className="text-xs font-bold text-emerald-500">กะ</span></span>
+                        </div>
+                        <div className="bg-amber-50/70 border border-amber-100 rounded-2xl p-4 text-center">
+                           <span className="block text-[10px] font-black text-amber-700 uppercase">สแกนล่าช้าเกินเวลา (Late)</span>
+                           <span className="text-xl font-black text-amber-700 font-mono mt-1 block">{lateCount} <span className="text-xs font-bold text-amber-500">กะ</span></span>
+                        </div>
+                        <div className="bg-rose-50/70 border border-rose-100 rounded-2xl p-4 text-center">
+                           <span className="block text-[10px] font-black text-rose-700 uppercase">ค้างสแกนตรวจ (Overdue)</span>
+                           <span className="text-xl font-black text-rose-700 font-mono mt-1 block">{overdueCount} <span className="text-xs font-bold text-rose-500">กะ</span></span>
+                        </div>
+                     </div>
+
+                     {/* Real Compliance Target Indicator */}
+                     <div className="bg-slate-50/70 border border-slate-150 rounded-2xl p-4 flex flex-col md:flex-row md:items-center justify-between gap-4">
+                        <div className="flex-1">
+                           <div className="flex justify-between text-xs font-black text-slate-700 mb-1.5">
+                              <span>อัตราการตรวจสอบสำเร็จตรงเวลาเฉลี่ย (Perfect KPI Rate):</span>
+                              <span className={cn("font-bold text-sm", perfectRate >= 80 ? "text-emerald-600" : "text-amber-600")}>{perfectRate}%</span>
+                           </div>
+                           <div className="w-full bg-slate-200 h-2.5 rounded-full overflow-hidden">
+                              <div 
+                                 className={cn("h-full transition-all duration-500", perfectRate >= 80 ? "bg-emerald-500" : "bg-amber-500")}
+                                 style={{ width: `${perfectRate}%` }}
+                              />
+                           </div>
+                        </div>
+                        <div className="shrink-0 text-center md:text-right text-[11px] font-bold text-slate-500 leading-tight">
+                           {perfectRate >= 80 ? (
+                              <p className="text-emerald-700 font-extrabold">🟢 ผลงานอยู่ในเกณฑ์ดีเยี่ยมผ่านค่าเป้าหมาย (KPI &gt; 80%)</p>
+                           ) : (
+                              <p className="text-amber-700 font-extrabold">⚠️ ควรส่งข้อชี้แจงเพื่อบริหารจัดการเวลาให้รอบคอบยิ่งขึ้น</p>
+                           )}
+                           <p className="mt-0.5 text-[10px]">เทียบเกณฑ์มาตรฐานโรงงาน ISO 9001:2015</p>
+                        </div>
+                     </div>
+
+                     {/* Filters and Search controls */}
+                     <div className="flex flex-col sm:flex-row items-center gap-3 bg-slate-50 border border-slate-100 rounded-2xl p-4">
+                        <div className="relative flex-1 w-full">
+                           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                           <input
+                              type="text"
+                              placeholder="ค้นหาชื่อหัวหน้ากะ หรือผู้ช่วย..."
+                              value={auditSearchLeader}
+                              onChange={e => setAuditSearchLeader(e.target.value)}
+                              className="w-full pl-9 pr-8 py-1.5 bg-white border border-slate-200 rounded-xl text-xs focus:outline-none focus:ring-2 focus:ring-indigo-500/20 font-semibold text-slate-800"
+                           />
+                           {auditSearchLeader && (
+                              <button onClick={() => setAuditSearchLeader('')} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600">
+                                 <X className="w-3.5 h-3.5" />
+                              </button>
+                           )}
+                        </div>
+
+                        <div className="flex items-center gap-1.5 bg-slate-200/50 p-1 rounded-xl w-full sm:w-auto overflow-x-auto text-[11px] font-bold">
+                           <button
+                              onClick={() => setAuditStatusFilter('all')}
+                              className={cn("px-2.5 py-1 rounded-lg transition-all", auditStatusFilter === 'all' ? "bg-white text-slate-800 shadow-xs" : "text-slate-500 hover:text-slate-800")}
+                           >
+                              ทั้งหมด
+                           </button>
+                           <button
+                              onClick={() => setAuditStatusFilter('perfect')}
+                              className={cn("px-2.5 py-1 rounded-lg transition-all flex items-center gap-1", auditStatusFilter === 'perfect' ? "bg-white text-emerald-700 shadow-xs" : "text-slate-500 hover:text-emerald-700")}
+                           >
+                              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span> ตรงเวลา
+                           </button>
+                           <button
+                              onClick={() => setAuditStatusFilter('late_complete')}
+                              className={cn("px-2.5 py-1 rounded-lg transition-all flex items-center gap-1", auditStatusFilter === 'late_complete' ? "bg-white text-amber-700 shadow-xs" : "text-slate-500 hover:text-amber-700")}
+                           >
+                              <span className="w-1.5 h-1.5 rounded-full bg-amber-500"></span> เลยเวลา
+                           </button>
+                           <button
+                              onClick={() => setAuditStatusFilter('overdue')}
+                              className={cn("px-2.5 py-1 rounded-lg transition-all flex items-center gap-1", auditStatusFilter === 'overdue' ? "bg-white text-rose-700 shadow-xs" : "text-slate-500 hover:text-rose-700")}
+                           >
+                              <span className="w-1.5 h-1.5 rounded-full bg-rose-500"></span> ค้างตรวจ
+                           </button>
+                        </div>
+                     </div>
+
+                     {/* Audit Data List Table */}
+                     <div className="overflow-y-auto max-h-[350px] custom-scrollbar border border-slate-100 rounded-2xl bg-white">
+                        <table className="w-full text-left text-xs border-collapse">
+                           <thead className="bg-slate-50 sticky top-0 z-10">
+                              <tr className="border-b border-slate-100 text-slate-400 font-extrabold uppercase tracking-wider text-[9px]">
+                                 <th className="py-3 px-4">วันที่บันทึกกะ</th>
+                                 <th className="py-3 px-2">กะการทำงาน</th>
+                                 <th className="py-3 px-4">ชื่อหัวหน้ากะ</th>
+                                 <th className="py-3 px-4">ผู้ช่วยสนับสนุน (Assistants)</th>
+                                 <th className="py-3 px-2">เวลาตรวจจริงเฉลี่ย</th>
+                                 <th className="py-3 px-3">ผลประเมินเวลาควบคุม</th>
+                                 <th className="py-3 px-4 text-center">สถานะตรวจสอบกะ</th>
+                              </tr>
+                           </thead>
+                           <tbody className="divide-y divide-slate-100 font-bold text-slate-800">
+                              {filteredAuditData.length === 0 ? (
+                                 <tr>
+                                    <td colSpan={7} className="py-12 text-center text-slate-400 font-medium">
+                                       ไม่พบข้อมูลกะหรือรายชื่อหัวหน้ากะที่ตรงกับเงื่อนไขการค้นหา
+                                    </td>
+                                 </tr>
+                              ) : (
+                                 filteredAuditData.map((row, rIdx) => {
+                                    const isOutShift = row.status === 'late_complete' || row.status === 'overdue';
+                                    return (
+                                       <tr key={`${row.dateStr}-${row.shift}-${rIdx}`} className={cn("hover:bg-slate-50/50 transition-colors", isOutShift ? "bg-rose-50/5" : "")}>
+                                          <td className="py-3 px-4 font-mono text-[11px] text-slate-600">
+                                             {row.dateDisplayStr}
+                                          </td>
+                                          <td className="py-3 px-2">
+                                             <span className={cn(
+                                                "px-2 py-0.5 rounded text-[10px] font-black uppercase border",
+                                                row.shift === 'DAY' ? "bg-amber-50 text-amber-700 border-amber-200" : "bg-indigo-50 text-indigo-700 border-indigo-200"
+                                             )}>
+                                                {row.shift === 'DAY' ? '🌞 เช้า' : '🌙 ดึก'}
+                                             </span>
+                                          </td>
+                                          <td className="py-3 px-4">
+                                             <div className="flex items-center gap-1.5">
+                                                <div className={cn(
+                                                   "w-1.5 h-1.5 rounded-full",
+                                                   isOutShift ? "bg-rose-500 animate-pulse" : "bg-emerald-500"
+                                                )}></div>
+                                                <span className={isOutShift ? "text-rose-900 font-black" : "text-slate-800"}>
+                                                   {row.leader.split(' ')[0]}
+                                                 </span>
+                                             </div>
+                                          </td>
+                                          <td className="py-3 px-4 text-slate-400 font-semibold text-[11px] truncate max-w-[200px]" title={row.assistants}>
+                                             {row.assistants.split(',').map(name => name.trim().split(' ')[0]).join(', ')}
+                                          </td>
+                                          <td className="py-3 px-2 font-mono text-slate-700 font-black">
+                                             {row.avgTimeStr} น.
+                                          </td>
+                                          <td className="py-3 px-3">
+                                             <span className={cn(
+                                                "px-2.5 py-1 rounded-xl text-[10px] font-extrabold border inline-block whitespace-nowrap shadow-xs",
+                                                row.status === 'perfect' ? "bg-emerald-50 border-emerald-200 text-emerald-800" :
+                                                row.status === 'late_complete' ? "bg-amber-50 border-amber-200 text-amber-800" : "bg-red-50 border-red-200 text-red-800"
+                                             )}>
+                                                {row.complianceEvaluation}
+                                             </span>
+                                          </td>
+                                          <td className="py-3 px-4 text-center">
+                                             <span className={cn(
+                                                "px-2.5 py-0.5 rounded-full text-[10px] font-black border inline-block whitespace-nowrap",
+                                                row.status === 'perfect' ? "bg-emerald-50 border-emerald-200 text-emerald-800" :
+                                                row.status === 'late_complete' ? "bg-amber-50 border-amber-200 text-amber-800" : "bg-red-50 border-red-200 text-red-800"
+                                             )}>
+                                                {row.statusText}
+                                             </span>
+                                             {row.lateMinutes > 0 && (
+                                                <span className="block text-[8px] font-black text-rose-600 mt-0.5">
+                                                   (ล่าช้า {row.lateMinutes} นาที)
+                                                </span>
+                                             )}
+                                          </td>
+                                       </tr>
+                                    );
+                                 })
+                              )}
+                           </tbody>
+                        </table>
+                     </div>
+                  </div>
+               );
+            })()}
 
             {/* 3. SHIFT INSPECTION MONITOR DETAIL TABLE */}
             <div className="bg-white border border-slate-200 rounded-3xl p-6 sm:p-8 space-y-4 shadow-sm">

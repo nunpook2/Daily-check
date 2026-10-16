@@ -3,7 +3,10 @@ import {
   initializeFirestore, 
   getFirestore, 
   persistentLocalCache, 
-  persistentMultipleTabManager 
+  persistentMultipleTabManager,
+  disableNetwork,
+  getDocFromServer,
+  doc
 } from "firebase/firestore";
 // import { getAnalytics } from "firebase/analytics";
 
@@ -35,6 +38,32 @@ try {
 }
 
 export const db = firestoreDb;
+
+// Validate Connection to Firestore on boot to handle offline/unreachable states immediately
+async function testConnection() {
+  const timeoutPromise = new Promise((_, reject) => 
+    setTimeout(() => reject(new Error("Connection timeout")), 2000)
+  );
+  try {
+    const testDoc = doc(db, 'test', 'connection');
+    await Promise.race([
+      getDocFromServer(testDoc),
+      timeoutPromise
+    ]);
+    console.log("Firestore successfully connected to the backend.");
+  } catch (error) {
+    console.warn("Could not reach Cloud Firestore backend. Switching to offline-only mode.", error);
+    try {
+      await disableNetwork(db);
+      console.log("Firestore network disabled successfully. Serving from local cache/local storage.");
+    } catch (disableError) {
+      console.error("Error disabling Firestore network:", disableError);
+    }
+  }
+}
+
+// Call testConnection to validate connectivity and handle offline fallback gracefully
+testConnection();
 
 // Analytics is optional and sometimes requires a browser context, 
 // leaving it out of required exports to prevent SSR/deployment issues on Vercel unless explicitly used.

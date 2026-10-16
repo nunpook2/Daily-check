@@ -35,6 +35,25 @@ const setLocalStorage = <T,>(key: string, value: T) => {
   }
 };
 
+// Helper to recursively remove undefined properties from nested objects/arrays before Firestore saving
+export function cleanObject<T>(obj: T): T {
+  if (obj === undefined) return undefined as any;
+  if (obj === null) return null as any;
+  if (Array.isArray(obj)) {
+    return obj.map(item => cleanObject(item)).filter(item => item !== undefined) as any;
+  }
+  if (typeof obj === 'object') {
+    const clean: any = {};
+    for (const [key, value] of Object.entries(obj)) {
+      if (value !== undefined) {
+        clean[key] = cleanObject(value);
+      }
+    }
+    return clean;
+  }
+  return obj;
+}
+
 let mockEquipments: Equipment[] = getLocalStorage('lab_equipments', [
   { id: '1', name: 'MI 035', code: 'MI-035', location: 'Lab OTR', referenceDocNo: 'PDS-F-1035 Rev.001', status: 'active', createdAt: Date.now() },
   { id: '2', name: 'HPLC System', code: 'HPLC-001', location: 'Analytical Lab', status: 'active', createdAt: Date.now() },
@@ -70,10 +89,23 @@ let mockLogs: CheckLog[] = getLocalStorage('lab_logs', [
 ]);
 
 let mockOperators: Operator[] = getLocalStorage('lab_operators', [
-  { id: 'o1', name: 'Sarah Connor', employeeId: 'SC-101', isActive: true, role: 'shift_leader', shift: 'DAY' },
-  { id: 'o2', name: 'John Doe', employeeId: 'JD-102', isActive: true, role: 'operator', shift: 'DAY' },
-  { id: 'o3', name: 'Tony Stark', employeeId: 'TS-303', isActive: true, role: 'shift_leader', shift: 'NIGHT' },
-  { id: 'o4', name: 'Bruce Banner', employeeId: 'BB-404', isActive: true, role: 'operator', shift: 'NIGHT' },
+  // 3-3 Employees (Shifts A, B, C, D)
+  { id: 'o1', name: 'Sarah Connor', employeeId: 'SC-101', isActive: true, role: 'shift_leader', shift: 'DAY', classification: 'employee', shiftGroup: 'A' },
+  { id: 'o2', name: 'John Doe', employeeId: 'JD-102', isActive: true, role: 'operator', shift: 'DAY', classification: 'employee', shiftGroup: 'A' },
+  { id: 'o3', name: 'Tony Stark', employeeId: 'TS-303', isActive: true, role: 'shift_leader', shift: 'NIGHT', classification: 'employee', shiftGroup: 'B' },
+  { id: 'o4', name: 'Bruce Banner', employeeId: 'BB-404', isActive: true, role: 'operator', shift: 'NIGHT', classification: 'employee', shiftGroup: 'B' },
+  { id: 'o5', name: 'Steve Rogers', employeeId: 'SR-505', isActive: true, role: 'shift_leader', shift: 'DAY', classification: 'employee', shiftGroup: 'C' },
+  { id: 'o6', name: 'Peter Parker', employeeId: 'PP-606', isActive: true, role: 'operator', shift: 'DAY', classification: 'employee', shiftGroup: 'C' },
+  { id: 'o7', name: 'Natasha Romanoff', employeeId: 'NR-707', isActive: true, role: 'shift_leader', shift: 'NIGHT', classification: 'employee', shiftGroup: 'D' },
+  { id: 'o8', name: 'Clint Barton', employeeId: 'CB-808', isActive: true, role: 'operator', shift: 'NIGHT', classification: 'employee', shiftGroup: 'D' },
+  
+  // 4-2 Assistants (Shifts A, B, C)
+  { id: 'a1', name: 'Wanda Maximoff', employeeId: 'WM-901', isActive: true, role: 'assistant', shift: 'DAY', classification: 'assistant', shiftGroup: 'A' },
+  { id: 'a2', name: 'Vision', employeeId: 'VS-902', isActive: true, role: 'assistant', shift: 'DAY', classification: 'assistant', shiftGroup: 'A' },
+  { id: 'a3', name: 'Carol Danvers', employeeId: 'CD-903', isActive: true, role: 'assistant', shift: 'NIGHT', classification: 'assistant', shiftGroup: 'B' },
+  { id: 'a4', name: 'Sam Wilson', employeeId: 'SW-904', isActive: true, role: 'assistant', shift: 'NIGHT', classification: 'assistant', shiftGroup: 'B' },
+  { id: 'a5', name: 'Bucky Barnes', employeeId: 'BB-905', isActive: true, role: 'assistant', shift: 'DAY', classification: 'assistant', shiftGroup: 'C' },
+  { id: 'a6', name: 'Scott Lang', employeeId: 'SL-906', isActive: true, role: 'assistant', shift: 'DAY', classification: 'assistant', shiftGroup: 'C' },
 ]);
 
 export async function fetchEquipments(): Promise<Equipment[]> {
@@ -94,7 +126,7 @@ export async function fetchEquipments(): Promise<Equipment[]> {
 }
 
 export async function addEquipment(equipment: Omit<Equipment, 'id'>): Promise<Equipment> {
-  const cleanEq = Object.fromEntries(Object.entries(equipment).filter(([_, v]) => v !== undefined));
+  const cleanEq = cleanObject(equipment);
   try {
     const docRef = await addDoc(collection(db, "equipments"), cleanEq);
     const newEq = { ...equipment, id: docRef.id };
@@ -158,8 +190,7 @@ export async function fetchCheckItems(equipmentId?: string): Promise<CheckItem[]
 }
 
 export async function addCheckItem(item: Omit<CheckItem, 'id'>): Promise<CheckItem> {
-  // Strip undefined values for Firestore
-  const cleanItem = Object.fromEntries(Object.entries(item).filter(([_, v]) => v !== undefined));
+  const cleanItem = cleanObject(item);
   try {
     const docRef = await addDoc(collection(db, "check_items"), cleanItem);
     const newItem = { ...item, id: docRef.id };
@@ -294,7 +325,7 @@ export async function fetchLogs(dateKey: string): Promise<CheckLog[]> {
 }
 
 export async function saveCheckLog(log: Omit<CheckLog, 'id'>): Promise<string> {
-  const cleanLog = Object.fromEntries(Object.entries(log).filter(([_, v]) => v !== undefined));
+  const cleanLog = cleanObject(log);
   try {
     const docRef = await addDoc(collection(db, "logs"), cleanLog);
     const newLog = { ...log, id: docRef.id };

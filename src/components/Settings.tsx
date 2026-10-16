@@ -1,10 +1,86 @@
 import React, { useState, useEffect, useMemo } from 'react';
+import { differenceInCalendarDays, addDays, format } from 'date-fns';
 import { fetchEquipments, fetchCheckItems, addEquipment, deleteEquipment, updateEquipment, addCheckItem, deleteCheckItem, updateCheckItem, fetchOperators, addOperator, deleteOperator, updateOperator, fetchTimeWindowSettings, saveTimeWindowSettings } from '../lib/db';
 import { Equipment, CheckItem, Operator, TimeWindowSettings } from '../types';
-import { Plus, Settings2, Users, MonitorSmartphone, QrCode, X, ListChecks, Info, Trash2, Edit2 } from 'lucide-react';
+import { Plus, Settings2, Users, MonitorSmartphone, QrCode, X, ListChecks, Info, Trash2, Edit2, Calendar, Printer, Clock, ArrowRight, Shuffle, Search, Briefcase } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { motion, AnimatePresence } from 'motion/react';
 import { QRCodeSVG } from 'qrcode.react';
+
+// Helper for 3-3 rotation (12-Day Cycle)
+const calculate33Groups = (date: Date) => {
+  const anchorDate = new Date('2026-01-01T00:00:00');
+  const diffDays = differenceInCalendarDays(date, anchorDate);
+  const cycleDay = ((diffDays % 12) + 12) % 12 + 1;
+  
+  let dayGroup: 'A' | 'B' | 'C' | 'D' = 'A';
+  let nightGroup: 'A' | 'B' | 'C' | 'D' = 'B';
+  let offDayGroup: 'A' | 'B' | 'C' | 'D' = 'D';
+  let offNightGroup: 'A' | 'B' | 'C' | 'D' = 'C';
+  
+  if (cycleDay >= 1 && cycleDay <= 3) {
+    dayGroup = 'A'; nightGroup = 'B'; offDayGroup = 'D'; offNightGroup = 'C';
+  } else if (cycleDay >= 4 && cycleDay <= 6) {
+    dayGroup = 'C'; nightGroup = 'D'; offDayGroup = 'A'; offNightGroup = 'B';
+  } else if (cycleDay >= 7 && cycleDay <= 9) {
+    dayGroup = 'B'; nightGroup = 'A'; offDayGroup = 'C'; offNightGroup = 'D';
+  } else if (cycleDay >= 10 && cycleDay <= 12) {
+    dayGroup = 'D'; nightGroup = 'C'; offDayGroup = 'B'; offNightGroup = 'A';
+  }
+  
+  return { cycleDay, dayGroup, nightGroup, offDayGroup, offNightGroup };
+};
+
+// Helper for 4-2 rotation (18-Day Cycle)
+const calculate42Groups = (date: Date) => {
+  const anchorDate = new Date('2026-01-01T00:00:00');
+  const diffDays = differenceInCalendarDays(date, anchorDate);
+  const cycleDay = ((diffDays % 18) + 18) % 18 + 1;
+  
+  let dayGroup: 'A' | 'B' | 'C' = 'C';
+  let nightGroup: 'A' | 'B' | 'C' = 'A';
+  let offGroup: 'A' | 'B' | 'C' = 'B';
+  
+  if (cycleDay >= 1 && cycleDay <= 2) {
+    dayGroup = 'C'; nightGroup = 'A'; offGroup = 'B';
+  } else if (cycleDay >= 3 && cycleDay <= 4) {
+    dayGroup = 'B'; nightGroup = 'A'; offGroup = 'C';
+  } else if (cycleDay >= 5 && cycleDay <= 6) {
+    dayGroup = 'B'; nightGroup = 'C'; offGroup = 'A';
+  } else if (cycleDay >= 7 && cycleDay <= 8) {
+    dayGroup = 'A'; nightGroup = 'C'; offGroup = 'B';
+  } else if (cycleDay >= 9 && cycleDay <= 10) {
+    dayGroup = 'A'; nightGroup = 'B'; offGroup = 'C';
+  } else if (cycleDay >= 11 && cycleDay <= 12) {
+    dayGroup = 'C'; nightGroup = 'B'; offGroup = 'A';
+  } else if (cycleDay >= 13 && cycleDay <= 14) {
+    dayGroup = 'C'; nightGroup = 'A'; offGroup = 'B';
+  } else if (cycleDay >= 15 && cycleDay <= 16) {
+    dayGroup = 'B'; nightGroup = 'A'; offGroup = 'C';
+  } else if (cycleDay >= 17 && cycleDay <= 18) {
+    dayGroup = 'B'; nightGroup = 'C'; offGroup = 'A';
+  }
+  
+  return { cycleDay, dayGroup, nightGroup, offGroup };
+};
+
+// Thai Date Formatter helpers
+const getThaiDayName = (date: Date) => {
+  const days = ['อาทิตย์', 'จันทร์', 'อังคาร', 'พุธ', 'พฤหัสบดี', 'ศุกร์', 'เสาร์'];
+  return days[date.getDay()];
+};
+
+const getThaiMonthName = (date: Date) => {
+  const months = [
+    'มกราคม', 'กุมภาพันธ์', 'มีนาคม', 'เมษายน', 'พฤษภาคม', 'มิถุนายน',
+    'กรกฎาคม', 'สิงหาคม', 'กันยายน', 'ตุลาคม', 'พฤศจิกายน', 'ธันวาคม'
+  ];
+  return months[date.getMonth()];
+};
+
+const formatThaiDate = (date: Date) => {
+  return `วัน${getThaiDayName(date)}ที่ ${date.getDate()} ${getThaiMonthName(date)} ${date.getFullYear() + 543}`;
+};
 
 const InlineCheckItemRow = ({ item, onDelete, onUpdate }: { item: CheckItem, onDelete: () => void, onUpdate: (updated: CheckItem) => Promise<void>, key?: any }) => {
   const [local, setLocal] = useState<CheckItem>(item);
@@ -189,8 +265,40 @@ export default function Settings() {
   const [equipments, setEquipments] = useState<Equipment[]>([]);
   const [checkItems, setCheckItems] = useState<CheckItem[]>([]);
   const [operators, setOperators] = useState<Operator[]>([]);
-  const [newOpRole, setNewOpRole] = useState<'operator' | 'shift_leader'>('operator');
+  const [newOpRole, setNewOpRole] = useState<'operator' | 'shift_leader' | 'assistant'>('operator');
   const [newOpShift, setNewOpShift] = useState<'DAY' | 'NIGHT'>('DAY');
+
+  // Personnel configuration and shift roster helper states
+  const [personnelSubTab, setPersonnelSubTab] = useState<'directory' | 'calculator'>('directory');
+  const [newOpClassification, setNewOpClassification] = useState<'employee' | 'assistant'>('employee');
+  const [newOpShiftGroup, setNewOpShiftGroup] = useState<'A' | 'B' | 'C' | 'D'>('A');
+
+  const [editingOpClassification, setEditingOpClassification] = useState<'employee' | 'assistant'>('employee');
+  const [editingOpShiftGroup, setEditingOpShiftGroup] = useState<'A' | 'B' | 'C' | 'D'>('A');
+
+  // Roster calculator states
+  const [singleDate, setSingleDate] = useState<string>(() => {
+    const today = new Date();
+    const year = today.getFullYear();
+    const month = String(today.getMonth() + 1).padStart(2, '0');
+    const day = String(today.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  });
+  const [startDate, setStartDate] = useState<string>(() => {
+    const today = new Date();
+    const year = today.getFullYear();
+    const month = String(today.getMonth() + 1).padStart(2, '0');
+    const day = String(today.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  });
+  const [endDate, setEndDate] = useState<string>(() => {
+    const d = new Date();
+    d.setDate(d.getDate() + 6);
+    const year = d.getFullYear();
+    const month = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  });
 
   const [dayStart, setDayStart] = useState('08:00');
   const [dayEnd, setDayEnd] = useState('10:00');
@@ -305,12 +413,23 @@ export default function Settings() {
   const handleAddOperator = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newOpName || !newOpId) return;
+    
+    let finalRole: 'operator' | 'shift_leader' | 'assistant' = 'operator';
+    if (newOpClassification === 'assistant') {
+      finalRole = 'assistant';
+    } else {
+      // If it's currently set to 'assistant' but they are an employee, fall back to 'operator'
+      finalRole = (newOpRole === 'assistant' ? 'operator' : newOpRole) as any;
+    }
+
     await addOperator({
       name: newOpName,
       employeeId: newOpId,
       isActive: true,
-      role: newOpRole,
-      shift: newOpShift
+      role: finalRole,
+      classification: newOpClassification,
+      shiftGroup: newOpShiftGroup,
+      shift: (newOpClassification === 'employee' && (newOpShiftGroup === 'A' || newOpShiftGroup === 'C')) ? 'DAY' : 'NIGHT'
     });
     setNewOpName(''); setNewOpId('');
     await loadData();
@@ -319,7 +438,7 @@ export default function Settings() {
   const [confirmDeleteOpId, setConfirmDeleteOpId] = useState<string | null>(null);
   const [editingOpId, setEditingOpId] = useState<string | null>(null);
   const [editingOpName, setEditingOpName] = useState<string>('');
-  const [editingOpRole, setEditingOpRole] = useState<'operator' | 'shift_leader'>('operator');
+  const [editingOpRole, setEditingOpRole] = useState<'operator' | 'shift_leader' | 'assistant'>('operator');
   const [editingOpShift, setEditingOpShift] = useState<'DAY' | 'NIGHT'>('DAY');
 
   const handleDeleteOperator = async (id: string) => {
@@ -336,6 +455,8 @@ export default function Settings() {
     setEditingOpId(op.id!);
     setEditingOpName(op.name);
     setEditingOpRole(op.role || 'operator');
+    setEditingOpClassification(op.classification || 'employee');
+    setEditingOpShiftGroup(op.shiftGroup || 'A');
     setEditingOpShift(op.shift || 'DAY');
   };
 
@@ -352,10 +473,19 @@ export default function Settings() {
 
   const submitEditOperator = async (id: string) => {
     if (editingOpName) {
+      let finalRole = editingOpRole;
+      if (editingOpClassification === 'assistant') {
+        finalRole = 'assistant';
+      } else if (editingOpRole === 'assistant') {
+        finalRole = 'operator';
+      }
+
       await updateOperator(id, {
         name: editingOpName,
-        role: editingOpRole,
-        shift: editingOpShift
+        role: finalRole,
+        classification: editingOpClassification,
+        shiftGroup: editingOpShiftGroup,
+        shift: (editingOpClassification === 'employee' && (editingOpShiftGroup === 'A' || editingOpShiftGroup === 'C')) ? 'DAY' : 'NIGHT'
       });
       setEditingOpId(null);
       await loadData();
@@ -437,178 +567,568 @@ export default function Settings() {
         className="grid grid-cols-1 xl:grid-cols-2 gap-4 sm:gap-6"
       >
         {activeTab === 'operators' && (
-          <>
-            <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-4 sm:p-6 space-y-4 h-fit">
-              <h2 className="text-lg font-semibold text-slate-900 border-b border-slate-100 pb-2">Add New Operator</h2>
-              <form onSubmit={handleAddOperator} className="space-y-4">
-                 <div>
-                    <label className="block text-sm text-slate-700 mb-1">Operator Name</label>
-                    <input type="text" required value={newOpName} onChange={e => setNewOpName(e.target.value)}
-                           className="w-full px-3 py-2 border border-slate-200 rounded-lg focus:ring-2 focus:ring-indigo-500" />
-                 </div>
-                 <div>
-                    <label className="block text-sm text-slate-700 mb-1">Employee ID</label>
-                    <input type="text" required value={newOpId} onChange={e => setNewOpId(e.target.value)}
-                           className="w-full px-3 py-2 border border-slate-200 rounded-lg focus:ring-2 focus:ring-indigo-500" />
-                 </div>
-                 <div className="grid grid-cols-2 gap-3">
-                    <div>
-                       <label className="block text-xs font-bold text-slate-700 mb-1">ตำแหน่ง (Position / Role)</label>
-                       <select 
-                          value={newOpRole} 
-                          onChange={e => setNewOpRole(e.target.value as any)}
-                          className="w-full px-3 py-2 border border-slate-200 rounded-lg focus:ring-2 focus:ring-indigo-500 bg-white text-xs font-medium"
-                       >
-                          <option value="operator">ผู้ปฏิบัติงาน (Operator)</option>
-                          <option value="shift_leader">หัวหน้ากะ (Shift Leader)</option>
-                       </select>
-                    </div>
-                    <div>
-                       <label className="block text-xs font-bold text-slate-700 mb-1">กะการทำงาน (Shift)</label>
-                       <select 
-                          value={newOpShift} 
-                          onChange={e => setNewOpShift(e.target.value as any)}
-                          className="w-full px-3 py-2 border border-slate-200 rounded-lg focus:ring-2 focus:ring-indigo-500 bg-white text-xs font-medium"
-                       >
-                          <option value="DAY">กะเช้า (DAY)</option>
-                          <option value="NIGHT">กะดึก (NIGHT)</option>
-                       </select>
-                    </div>
-                 </div>
-                 <button type="submit" className="flex items-center gap-2 px-4 py-2 bg-slate-900 text-white rounded-lg hover:bg-slate-800">
-                    <Plus className="w-4 h-4" /> Add Operator
-                 </button>
-              </form>
-            </div>
-            
-            {/* Time Window Settings panel inside Settings operators tab */}
-            <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-4 sm:p-6 space-y-4 h-fit md:col-span-1">
-              <h2 className="text-lg font-semibold text-slate-900 border-b border-slate-100 pb-2">⏰ ตั้งค่ารอบเวลาตรวจสอบประจำกะ</h2>
-              <form onSubmit={handleSaveTimeWindows} className="space-y-4">
-                  <p className="text-[11px] text-slate-400 font-bold leading-relaxed">
-                     กำหนดช่วงเวลาที่อนุญาตสำหรับการตรวจสอบประจำรอบ หากผู้ปฏิบัติงานสแกนส่งผลนอกช่วงเวลานี้ ระบบจะขึ้นสถานะ "ตรวจช้า" เพื่อติดตามประเมินผลประสิทธิภาพการทำงานในกะ
-                  </p>
-                  <div className="grid grid-cols-2 gap-3">
-                     <div>
-                        <label className="block text-[11px] font-black text-slate-700 mb-1">🌞 กะเช้า เริ่ม (Day Start)</label>
-                        <input type="time" required value={dayStart} onChange={e => setDayStart(e.target.value)}
-                               className="w-full px-3 py-2 border border-slate-200 rounded-lg text-xs font-bold" />
-                     </div>
-                     <div>
-                        <label className="block text-[11px] font-black text-slate-700 mb-1">🌞 กะเช้า สิ้นสุด (Day End)</label>
-                        <input type="time" required value={dayEnd} onChange={e => setDayEnd(e.target.value)}
-                               className="w-full px-3 py-2 border border-slate-200 rounded-lg text-xs font-bold" />
-                     </div>
-                  </div>
-                  <div className="grid grid-cols-2 gap-3">
-                     <div>
-                        <label className="block text-[11px] font-black text-slate-700 mb-1">🌙 กะดึก เริ่ม (Night Start)</label>
-                        <input type="time" required value={nightStart} onChange={e => setNightStart(e.target.value)}
-                               className="w-full px-3 py-2 border border-slate-200 rounded-lg text-xs font-bold" />
-                     </div>
-                     <div>
-                        <label className="block text-[11px] font-black text-slate-700 mb-1">🌙 กะดึก สิ้นสุด (Night End)</label>
-                        <input type="time" required value={nightEnd} onChange={e => setNightEnd(e.target.value)}
-                               className="w-full px-3 py-2 border border-slate-200 rounded-lg text-xs font-bold" />
-                     </div>
-                  </div>
-                  <button type="submit" className="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-indigo-600 text-white font-bold rounded-lg hover:bg-indigo-700 transition-colors text-xs cursor-pointer shadow-xs">
-                     บันทึกเกณฑ์รอบเวลาตรวจ
-                  </button>
-              </form>
+          <div className="xl:col-span-2 space-y-6">
+            {/* Sub-navigation for Personnel section */}
+            <div className="flex flex-col sm:flex-row gap-2 border-b border-slate-200 pb-2">
+              <button
+                type="button"
+                onClick={() => setPersonnelSubTab('directory')}
+                className={cn("px-4 py-2.5 rounded-xl font-bold text-xs flex items-center justify-center gap-2 transition-all outline-none border cursor-pointer",
+                  personnelSubTab === 'directory' 
+                    ? "bg-indigo-600 text-white shadow-sm border-indigo-600" 
+                    : "bg-white hover:bg-slate-50 text-slate-600 border-slate-200")}
+              >
+                <Users className="w-4 h-4 text-current" />
+                <span>1. จัดการรายชื่อและตำแหน่งพนักงาน (Personnel Setup)</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setPersonnelSubTab('calculator')}
+                className={cn("px-4 py-2.5 rounded-xl font-bold text-xs flex items-center justify-center gap-2 transition-all outline-none border cursor-pointer",
+                  personnelSubTab === 'calculator' 
+                    ? "bg-indigo-600 text-white shadow-sm border-indigo-600" 
+                    : "bg-white hover:bg-slate-50 text-slate-600 border-slate-200")}
+              >
+                <Calendar className="w-4 h-4 text-current" />
+                <span>2. ระบบจัดเวรกะประจำวันตามรอบวงโคจร (Roster Calculator)</span>
+              </button>
             </div>
 
-            <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-4 sm:p-6 space-y-4">
-              <h2 className="text-lg font-semibold text-slate-900 border-b border-slate-100 pb-2">Operator Roster</h2>
-              <ul className="divide-y divide-slate-100">
-                {operators.map(op => (
-                  <li key={op.id} className="py-3 flex justify-between items-center group">
-                    <div className="flex-1">
-                       {editingOpId === op.id ? (
-                          <div className="space-y-3 max-w-xs pr-4">
-                             <div>
-                                <label className="block text-[10px] font-black text-slate-500 uppercase mb-1">ชื่อพนักงาน</label>
-                                <input 
-                                  type="text" 
-                                  className="w-full px-2.5 py-1.5 text-xs border border-slate-200 rounded focus:border-indigo-500 bg-white font-medium"
-                                  value={editingOpName}
-                                  onChange={(e) => setEditingOpName(e.target.value)}
-                                  autoFocus
-                                />
-                             </div>
-                             <div className="grid grid-cols-2 gap-2">
-                                <div>
-                                   <label className="block text-[10px] font-black text-slate-500 uppercase mb-1">ตำแหน่ง</label>
-                                   <select
-                                      value={editingOpRole}
-                                      onChange={e => setEditingOpRole(e.target.value as any)}
-                                      className="w-full px-2.5 py-1.5 text-xs border border-slate-200 rounded bg-white font-semibold"
-                                   >
-                                      <option value="operator">Operator</option>
-                                      <option value="shift_leader">Shift Leader</option>
-                                   </select>
-                                </div>
-                                <div>
-                                   <label className="block text-[10px] font-black text-slate-500 uppercase mb-1">กะทำงาน</label>
-                                   <select
-                                      value={editingOpShift}
-                                      onChange={e => setEditingOpShift(e.target.value as any)}
-                                      className="w-full px-2.5 py-1.5 text-xs border border-slate-200 rounded bg-white font-semibold"
-                                   >
-                                      <option value="DAY">DAY (เช้า)</option>
-                                      <option value="NIGHT">NIGHT (ดึก)</option>
-                                   </select>
-                                </div>
-                             </div>
-                          </div>
-                       ) : (
+            {personnelSubTab === 'directory' ? (
+              <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
+                {/* Add Personnel and Settings on the Left */}
+                <div className="space-y-6">
+                  <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-4 sm:p-6 space-y-4 h-fit">
+                    <h2 className="text-lg font-semibold text-slate-900 border-b border-slate-100 pb-2 flex items-center gap-2">
+                      <Users className="w-5 h-5 text-indigo-600" />
+                      ลงทะเบียนพนักงาน/ผู้ช่วยใหม่
+                    </h2>
+                    <form onSubmit={handleAddOperator} className="space-y-4">
+                       <div>
+                          <label className="block text-xs font-bold text-slate-700 uppercase tracking-wide mb-1">ชื่อพนักงาน *</label>
+                          <input type="text" required value={newOpName} onChange={e => setNewOpName(e.target.value)}
+                                 className="w-full px-3 py-2 border border-slate-200 rounded-lg focus:ring-2 focus:ring-indigo-500 font-medium text-sm" placeholder="เช่น นายสมชาย จริงใจ" />
+                       </div>
+                       <div>
+                          <label className="block text-xs font-bold text-slate-700 uppercase tracking-wide mb-1">รหัสพนักงาน (Employee ID) *</label>
+                          <input type="text" required value={newOpId} onChange={e => setNewOpId(e.target.value)}
+                                 className="w-full px-3 py-2 border border-slate-200 rounded-lg focus:ring-2 focus:ring-indigo-500 font-mono text-sm" placeholder="เช่น SC-101" />
+                       </div>
+                       
+                       <div className="grid grid-cols-2 gap-3">
                           <div>
-                             <p className="font-black text-slate-900 text-sm flex flex-wrap items-center gap-2">
-                                {op.name}
-                                <span className={cn("px-2 py-0.5 rounded text-[9px] font-extrabold uppercase", 
-                                   op.role === 'shift_leader' ? "bg-purple-100 text-purple-800 border border-purple-200" : "bg-slate-100 text-slate-700 border border-slate-200"
-                                )}>
-                                   {op.role === 'shift_leader' ? '⭐ Shift Leader' : 'Operator'}
-                                </span>
-                                <span className={cn("px-2 py-0.5 rounded text-[9px] font-extrabold uppercase", 
-                                   op.shift === 'NIGHT' ? "bg-indigo-50 text-indigo-700 border border-indigo-150" : "bg-amber-50 text-amber-700 border border-amber-150"
-                                )}>
-                                   {op.shift === 'NIGHT' ? '🌙 กะดึก' : '🌞 กะเช้า'}
-                                </span>
-                             </p>
-                             <p className="text-xs text-slate-500 font-mono mt-0.5 font-bold">รหัส: {op.employeeId}</p>
+                             <label className="block text-xs font-bold text-slate-700 mb-1">ประเภทกำลังพล (Type) *</label>
+                             <select 
+                                value={newOpClassification} 
+                                onChange={e => {
+                                  const val = e.target.value as any;
+                                  setNewOpClassification(val);
+                                  if (val === 'assistant') {
+                                    setNewOpRole('assistant');
+                                    setNewOpShiftGroup('A');
+                                  } else {
+                                    setNewOpRole('operator');
+                                    setNewOpShiftGroup('A');
+                                  }
+                                }}
+                                className="w-full px-3 py-2 border border-slate-200 rounded-lg focus:ring-2 focus:ring-indigo-500 bg-white text-xs font-semibold"
+                             >
+                                <option value="employee">พนักงานปฏิบัติงาน (Employee - 3-3 Pattern)</option>
+                                <option value="assistant">ผู้ช่วยสนับสนุน (Assistant - 4-2 Pattern)</option>
+                             </select>
                           </div>
-                       )}
-                    </div>
-                    <div className="flex gap-2 items-center">
-                       {editingOpId === op.id ? (
-                          <div className="flex flex-col sm:flex-row gap-1">
-                             <button onClick={() => submitEditOperator(op.id!)} className="px-3 py-1.5 text-xs font-bold text-white bg-indigo-600 rounded-lg hover:bg-indigo-700 transition-colors shadow-xs">Save</button>
-                             <button onClick={() => setEditingOpId(null)} className="px-3 py-1.5 text-xs font-bold text-slate-600 bg-slate-100 rounded-lg hover:bg-slate-200 transition-colors">Cancel</button>
+                          <div>
+                             <label className="block text-xs font-bold text-slate-700 mb-1">กลุ่มเวรกะ (Shift Group) *</label>
+                             <select 
+                                value={newOpShiftGroup} 
+                                onChange={e => setNewOpShiftGroup(e.target.value as any)}
+                                className="w-full px-3 py-2 border border-slate-200 rounded-lg focus:ring-2 focus:ring-indigo-500 bg-white text-xs font-bold"
+                             >
+                                <option value="A">กะ A (Group A)</option>
+                                <option value="B">กะ B (Group B)</option>
+                                <option value="C">กะ C (Group C)</option>
+                                {newOpClassification === 'employee' && <option value="D">กะ D (Group D)</option>}
+                             </select>
                           </div>
-                       ) : confirmDeleteOpId === op.id ? (
-                          <>
-                             <span className="text-xs font-semibold text-rose-500">Confirm Delete?</span>
-                             <button onClick={() => handleDeleteOperator(op.id!)} className="px-2 py-1 text-xs font-bold text-white bg-rose-600 rounded">Yes</button>
-                             <button onClick={() => setConfirmDeleteOpId(null)} className="px-2 py-1 text-xs font-semibold text-slate-600 bg-slate-100 rounded">No</button>
-                          </>
-                       ) : (
-                          <>
-                             <span className="px-2 py-1 bg-emerald-50 text-emerald-600 text-xs rounded-full font-medium">Active</span>
-                             <button onClick={() => handleEditOperator(op)} className="p-1.5 text-slate-300 hover:text-indigo-600 hover:bg-indigo-50 rounded hidden group-hover:block transition-all">
-                                <Edit2 className="w-4 h-4" />
-                             </button>
-                             <button onClick={() => handleDeleteOperator(op.id!)} className="p-1.5 text-slate-300 hover:text-rose-500 hover:bg-rose-50 rounded hidden group-hover:block transition-all">
-                                <Trash2 className="w-4 h-4" />
-                             </button>
-                          </>
-                       )}
+                       </div>
+
+                       <div>
+                          <label className="block text-xs font-bold text-slate-700 mb-1">ตำแหน่งปฏิบัติการ (Roster Role)</label>
+                          <select 
+                             value={newOpRole} 
+                             onChange={e => setNewOpRole(e.target.value as any)}
+                             disabled={newOpClassification === 'assistant'}
+                             className="w-full px-3 py-2 border border-slate-200 rounded-lg focus:ring-2 focus:ring-indigo-500 bg-white text-xs font-semibold disabled:bg-slate-50 disabled:text-slate-500"
+                          >
+                             {newOpClassification === 'employee' ? (
+                               <>
+                                 <option value="operator">สมาชิกกะ (Shift Member / Operator)</option>
+                                 <option value="shift_leader">หัวหน้ากะประจำกลุ่ม (Shift Leader)</option>
+                               </>
+                             ) : (
+                               <option value="assistant">ผู้ช่วยปฏิบัติงานกะ (Assistant)</option>
+                             )}
+                          </select>
+                       </div>
+
+                       <button type="submit" className="flex items-center justify-center gap-2 px-4 py-2 bg-slate-900 text-white font-bold rounded-lg hover:bg-slate-800 transition-colors w-full cursor-pointer text-xs">
+                          <Plus className="w-4 h-4" /> เพิ่มพนักงานเข้าระบบจัดกะ
+                       </button>
+                    </form>
+                  </div>
+                  
+                  {/* Time Window Settings */}
+                  <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-4 sm:p-6 space-y-4">
+                    <h2 className="text-lg font-semibold text-slate-900 border-b border-slate-100 pb-2 flex items-center gap-2">
+                       <Clock className="w-5 h-5 text-indigo-600" />
+                       ⏰ ตั้งค่าเกณฑ์รอบเวลาตรวจสอบ (Time Windows)
+                    </h2>
+                    <form onSubmit={handleSaveTimeWindows} className="space-y-4">
+                        <p className="text-[11px] text-slate-400 font-bold leading-relaxed">
+                           กำหนดช่วงเวลาสำหรับเช็กประจำรอบ (Daily) หากผู้ปฏิบัติงานสแกนคีย์นอกช่วงเวลานี้ ระบบจะขึ้นสถานะ "ตรวจช้า (Late)" บนไทม์ไลน์
+                        </p>
+                        <div className="grid grid-cols-2 gap-3">
+                           <div>
+                              <label className="block text-[11px] font-black text-slate-700 mb-1">🌞 กะเช้า เริ่ม (Day Start)</label>
+                              <input type="time" required value={dayStart} onChange={e => setDayStart(e.target.value)}
+                                     className="w-full px-3 py-2 border border-slate-200 rounded-lg text-xs font-bold" />
+                           </div>
+                           <div>
+                              <label className="block text-[11px] font-black text-slate-700 mb-1">🌞 กะเช้า สิ้นสุด (Day End)</label>
+                              <input type="time" required value={dayEnd} onChange={e => setDayEnd(e.target.value)}
+                                     className="w-full px-3 py-2 border border-slate-200 rounded-lg text-xs font-bold" />
+                           </div>
+                        </div>
+                        <div className="grid grid-cols-2 gap-3">
+                           <div>
+                              <label className="block text-[11px] font-black text-slate-700 mb-1">🌙 กะดึก เริ่ม (Night Start)</label>
+                              <input type="time" required value={nightStart} onChange={e => setNightStart(e.target.value)}
+                                     className="w-full px-3 py-2 border border-slate-200 rounded-lg text-xs font-bold" />
+                           </div>
+                           <div>
+                              <label className="block text-[11px] font-black text-slate-700 mb-1">🌙 กะดึก สิ้นสุด (Night End)</label>
+                              <input type="time" required value={nightEnd} onChange={e => setNightEnd(e.target.value)}
+                                     className="w-full px-3 py-2 border border-slate-200 rounded-lg text-xs font-bold" />
+                           </div>
+                        </div>
+                        <button type="submit" className="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-indigo-600 text-white font-bold rounded-lg hover:bg-indigo-700 transition-colors text-xs cursor-pointer shadow-xs">
+                           บันทึกเกณฑ์รอบเวลาตรวจ
+                        </button>
+                    </form>
+                  </div>
+                </div>
+
+                {/* Operator List on the Right */}
+                <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-4 sm:p-6 space-y-4">
+                  <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 border-b border-slate-100 pb-3">
+                    <h2 className="text-lg font-semibold text-slate-900 flex items-center gap-2">
+                      <Users className="w-5 h-5 text-indigo-600" />
+                      ทำเนียบพนักงานและผู้ช่วย ({operators.length} คน)
+                    </h2>
+                  </div>
+
+                  {/* Search box */}
+                  <div className="relative">
+                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 w-4 h-4" />
+                    <input 
+                      type="text" 
+                      placeholder="ค้นหาชื่อ หรือรหัสพนักงาน..." 
+                      value={singleDate === 'SEARCH_PLACEHOLDER' ? '' : (singleDate === 'SEARCH_PLACEHOLDER_TEMP' ? '' : (window as any)._opSearch || '')}
+                      onChange={e => {
+                        (window as any)._opSearch = e.target.value;
+                        loadData(); // trigger re-render
+                      }}
+                      className="w-full pl-9 pr-4 py-2 border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500 text-xs font-medium" 
+                    />
+                  </div>
+
+                  <ul className="divide-y divide-slate-100 max-h-[600px] overflow-y-auto pr-1">
+                    {operators
+                      .filter(op => {
+                        const q = ((window as any)._opSearch || '').toLowerCase();
+                        if (!q) return true;
+                        return op.name.toLowerCase().includes(q) || op.employeeId.toLowerCase().includes(q);
+                      })
+                      .map(op => {
+                        const opClass = op.classification || 'employee';
+                        const opGroup = op.shiftGroup || 'A';
+                        
+                        return (
+                          <li key={op.id} className="py-4 flex justify-between items-start sm:items-center gap-4 group">
+                            <div className="flex-1 min-w-0">
+                               {editingOpId === op.id ? (
+                                  <div className="space-y-3 bg-slate-50 p-3 rounded-xl border border-slate-200">
+                                     <div>
+                                        <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">ชื่อพนักงาน</label>
+                                        <input 
+                                          type="text" 
+                                          className="w-full px-2.5 py-1.5 text-xs border border-slate-300 rounded-lg focus:border-indigo-500 bg-white font-bold"
+                                          value={editingOpName}
+                                          onChange={(e) => setEditingOpName(e.target.value)}
+                                          autoFocus
+                                        />
+                                     </div>
+                                     
+                                     <div className="grid grid-cols-2 gap-2">
+                                        <div>
+                                           <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">ประเภท</label>
+                                           <select
+                                              value={editingOpClassification}
+                                              onChange={e => {
+                                                const val = e.target.value as any;
+                                                setEditingOpClassification(val);
+                                                if (val === 'assistant') {
+                                                  setEditingOpRole('assistant');
+                                                  setEditingOpShiftGroup('A');
+                                                } else {
+                                                  setEditingOpRole('operator');
+                                                  setEditingOpShiftGroup('A');
+                                                }
+                                              }}
+                                              className="w-full px-2 py-1 text-xs border border-slate-300 rounded bg-white font-bold"
+                                           >
+                                              <option value="employee">พนักงาน (3-3)</option>
+                                              <option value="assistant">ผู้ช่วย (4-2)</option>
+                                           </select>
+                                        </div>
+                                        <div>
+                                           <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">กลุ่มเวรกะ</label>
+                                           <select
+                                              value={editingOpShiftGroup}
+                                              onChange={e => setEditingOpShiftGroup(e.target.value as any)}
+                                              className="w-full px-2 py-1 text-xs border border-slate-300 rounded bg-white font-bold"
+                                           >
+                                              <option value="A">กะ A</option>
+                                              <option value="B">กะ B</option>
+                                              <option value="C">กะ C</option>
+                                              {editingOpClassification === 'employee' && <option value="D">กะ D</option>}
+                                           </select>
+                                        </div>
+                                     </div>
+
+                                     <div>
+                                        <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">ตำแหน่งในกะ</label>
+                                        <select
+                                           value={editingOpRole}
+                                           onChange={e => setEditingOpRole(e.target.value as any)}
+                                           disabled={editingOpClassification === 'assistant'}
+                                           className="w-full px-2 py-1 text-xs border border-slate-300 rounded bg-white font-bold disabled:bg-slate-100"
+                                        >
+                                           {editingOpClassification === 'employee' ? (
+                                             <>
+                                               <option value="operator">พนักงานกะ (Operator)</option>
+                                               <option value="shift_leader">หัวหน้ากะ (Shift Leader)</option>
+                                             </>
+                                           ) : (
+                                             <option value="assistant">ผู้ช่วยกะ (Assistant)</option>
+                                           )}
+                                        </select>
+                                     </div>
+                                  </div>
+                               ) : (
+                                  <div>
+                                     <p className="font-extrabold text-slate-900 text-sm flex flex-wrap items-center gap-1.5">
+                                        {op.name}
+                                        <span className={cn("px-1.5 py-0.5 rounded text-[8px] font-extrabold uppercase", 
+                                           opClass === 'employee' ? "bg-emerald-50 text-emerald-700 border border-emerald-100" : "bg-cyan-50 text-cyan-700 border border-cyan-100"
+                                        )}>
+                                           {opClass === 'employee' ? 'พนักงาน 3-3' : 'ผู้ช่วย 4-2'}
+                                        </span>
+                                        <span className="px-1.5 py-0.5 rounded text-[8px] font-black bg-indigo-50 text-indigo-700 border border-indigo-150">
+                                           กะ {opGroup}
+                                        </span>
+                                        <span className={cn("px-1.5 py-0.5 rounded text-[8px] font-black uppercase", 
+                                           op.role === 'shift_leader' ? "bg-purple-100 text-purple-800 border border-purple-200" : 
+                                           op.role === 'assistant' ? "bg-sky-100 text-sky-800 border border-sky-200" : "bg-slate-100 text-slate-700 border border-slate-200"
+                                        )}>
+                                           {op.role === 'shift_leader' ? '⭐ Leader' : op.role === 'assistant' ? 'Assistant' : 'Member'}
+                                        </span>
+                                     </p>
+                                     <p className="text-[10px] text-slate-500 font-mono mt-0.5 font-bold">รหัส: {op.employeeId}</p>
+                                  </div>
+                               )}
+                            </div>
+                            <div className="flex gap-1 items-center shrink-0">
+                               {editingOpId === op.id ? (
+                                  <div className="flex flex-col sm:flex-row gap-1">
+                                     <button onClick={() => submitEditOperator(op.id!)} className="px-3 py-1.5 text-[10px] font-bold text-white bg-indigo-600 rounded-lg hover:bg-indigo-700 transition-colors shadow-xs cursor-pointer">Save</button>
+                                     <button onClick={() => setEditingOpId(null)} className="px-3 py-1.5 text-[10px] font-bold text-slate-600 bg-slate-100 rounded-lg hover:bg-slate-200 transition-colors cursor-pointer">Cancel</button>
+                                  </div>
+                               ) : confirmDeleteOpId === op.id ? (
+                                  <div className="flex items-center gap-1">
+                                     <span className="text-[10px] font-bold text-rose-500">Confirm?</span>
+                                     <button onClick={() => handleDeleteOperator(op.id!)} className="px-2 py-1 text-[10px] font-bold text-white bg-rose-600 rounded cursor-pointer">Yes</button>
+                                     <button onClick={() => setConfirmDeleteOpId(null)} className="px-2 py-1 text-[10px] font-bold text-slate-600 bg-slate-100 rounded cursor-pointer">No</button>
+                                  </div>
+                               ) : (
+                                  <div className="flex items-center gap-1">
+                                     <button onClick={() => handleEditOperator(op)} className="p-1.5 text-slate-300 hover:text-indigo-600 hover:bg-indigo-50 border border-transparent rounded-lg sm:hidden group-hover:block transition-all cursor-pointer">
+                                        <Edit2 className="w-3.5 h-3.5" />
+                                     </button>
+                                     <button onClick={() => handleDeleteOperator(op.id!)} className="p-1.5 text-slate-300 hover:text-rose-500 hover:bg-rose-50 border border-transparent rounded-lg sm:hidden group-hover:block transition-all cursor-pointer">
+                                        <Trash2 className="w-3.5 h-3.5" />
+                                     </button>
+                                  </div>
+                               )}
+                            </div>
+                          </li>
+                        );
+                      })}
+                  </ul>
+                </div>
+              </div>
+            ) : (
+              /* SHIFT ROSTER CALCULATOR SUBTAB */
+              <div className="space-y-6">
+                <div className="bg-gradient-to-r from-slate-900 to-indigo-950 rounded-2xl p-4 sm:p-6 text-white shadow-md relative overflow-hidden">
+                  <div className="absolute top-0 right-0 w-64 h-64 bg-indigo-500/10 rounded-full blur-3xl pointer-events-none"></div>
+                  <h2 className="text-xl sm:text-2xl font-black flex items-center gap-2">
+                    <Calendar className="w-6 h-6 text-indigo-400" />
+                    โปรแกรมคำนวณเวรกะประจำวันอัตโนมัติ (Shift Roster Matrix)
+                  </h2>
+                  <p className="text-indigo-200/90 text-xs mt-1.5 font-bold leading-relaxed max-w-4xl">
+                     คำนวณกลุ่มปฏิบัติงานตามวงโคจรรอบ 12 วันของพนักงาน (3-3 Pattern) และรอบ 18 วันของผู้ช่วย (4-2 Pattern) จากจุดเริ่มอ้างอิง Anchor Date วันที่ 1 มกราคม พ.ศ. 2569 (2026-01-01) เที่ยงตรง ได้แม่นยำทุกวัน
+                  </p>
+                </div>
+
+                <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                  {/* Left Column: Day Query View */}
+                  <div className="lg:col-span-1 bg-white rounded-2xl shadow-sm border border-slate-200 p-5 space-y-4 h-fit">
+                    <h3 className="text-sm font-black text-indigo-700 uppercase tracking-wider flex items-center gap-1.5">
+                      <Calendar className="w-4 h-4" />
+                      1. ตรวจเช็คเวรประจำวันเดี่ยว
+                    </h3>
+                    
+                    <div>
+                      <label className="block text-xs font-bold text-slate-600 mb-1.5">เลือกวันที่ต้องการตรวจสอบ</label>
+                      <input 
+                        type="date" 
+                        value={singleDate} 
+                        onChange={e => setSingleDate(e.target.value)}
+                        className="w-full px-3 py-2 border border-indigo-200 rounded-xl focus:ring-2 focus:ring-indigo-500 font-bold text-sm bg-indigo-50/20 text-indigo-900" 
+                      />
                     </div>
-                  </li>
-                ))}
-              </ul>
-            </div>
-          </>
+
+                    {/* Calculation Results Card */}
+                    {(() => {
+                      const queryD = new Date(singleDate + 'T00:00:00');
+                      const r33 = calculate33Groups(queryD);
+                      const r42 = calculate42Groups(queryD);
+                      
+                      const employeesOnDay = operators.filter(o => o.isActive && (!o.classification || o.classification === 'employee') && o.shiftGroup === r33.dayGroup);
+                      const employeesOnNight = operators.filter(o => o.isActive && (!o.classification || o.classification === 'employee') && o.shiftGroup === r33.nightGroup);
+                      const employeesOff = operators.filter(o => o.isActive && (!o.classification || o.classification === 'employee') && (o.shiftGroup === r33.offDayGroup || o.shiftGroup === r33.offNightGroup));
+
+                      const assistantsOnDay = operators.filter(o => o.isActive && o.classification === 'assistant' && o.shiftGroup === r42.dayGroup);
+                      const assistantsOnNight = operators.filter(o => o.isActive && o.classification === 'assistant' && o.shiftGroup === r42.nightGroup);
+                      const assistantsOff = operators.filter(o => o.isActive && o.classification === 'assistant' && o.shiftGroup === r42.offGroup);
+
+                      return (
+                        <div className="space-y-4 pt-2">
+                          <div className="p-4 bg-slate-50 border border-slate-200 rounded-xl space-y-1.5 text-center">
+                            <p className="text-xs font-extrabold text-slate-500 uppercase">วันที่คำนวณ</p>
+                            <p className="text-base font-black text-slate-900">{formatThaiDate(queryD)}</p>
+                            <div className="flex justify-center gap-2 pt-1.5">
+                              <span className="text-[10px] font-black bg-indigo-50 text-indigo-700 px-2 py-0.5 rounded border border-indigo-150">
+                                รอบ 3-3: วันที่ {r33.cycleDay}/12
+                              </span>
+                              <span className="text-[10px] font-black bg-cyan-50 text-cyan-700 px-2 py-0.5 rounded border border-cyan-150">
+                                รอบ 4-2: วันที่ {r42.cycleDay}/18
+                              </span>
+                            </div>
+                          </div>
+
+                          {/* Quick details */}
+                          <div className="space-y-3.5">
+                            {/* Day Shift details */}
+                            <div className="border-l-4 border-amber-500 bg-amber-50/20 p-3 rounded-r-xl space-y-2">
+                              <h4 className="text-xs font-black text-amber-800 uppercase flex items-center justify-between">
+                                <span className="flex items-center gap-1">🌞 กะเช้า (DAY - 08:00 - 20:00)</span>
+                              </h4>
+                              <div className="text-[11px] space-y-1 text-slate-700 font-medium">
+                                <p className="font-bold text-slate-900">พนักงานกะ (Group {r33.dayGroup}):</p>
+                                {employeesOnDay.length > 0 ? (
+                                  <ul className="list-disc list-inside pl-1 space-y-0.5 font-semibold">
+                                    {employeesOnDay.map(o => (
+                                      <li key={o.id}>{o.name} <span className="text-slate-400 font-mono text-[9px]">({o.role === 'shift_leader' ? '⭐ Leader' : 'Member'})</span></li>
+                                    ))}
+                                  </ul>
+                                ) : <p className="text-slate-400 pl-1">ไม่มีข้อมูลพนักงานที่ลงทะเบียนในกะ {r33.dayGroup}</p>}
+
+                                <p className="font-bold text-slate-900 mt-2">ผู้ช่วยสนับสนุน (Group {r42.dayGroup}):</p>
+                                {assistantsOnDay.length > 0 ? (
+                                  <ul className="list-disc list-inside pl-1 space-y-0.5 font-semibold">
+                                    {assistantsOnDay.map(o => <li key={o.id}>{o.name} <span className="text-slate-400 font-mono text-[9px]">(Assistant)</span></li>)}
+                                  </ul>
+                                ) : <p className="text-slate-400 pl-1">ไม่มีข้อมูลผู้ช่วยที่ลงทะเบียนในกะ {r42.dayGroup}</p>}
+                              </div>
+                            </div>
+
+                            {/* Night Shift details */}
+                            <div className="border-l-4 border-indigo-600 bg-indigo-50/20 p-3 rounded-r-xl space-y-2">
+                              <h4 className="text-xs font-black text-indigo-900 uppercase flex items-center justify-between">
+                                <span className="flex items-center gap-1">🌙 กะดึก (NIGHT - 20:00 - 08:00)</span>
+                              </h4>
+                              <div className="text-[11px] space-y-1 text-slate-700 font-medium">
+                                <p className="font-bold text-slate-900">พนักงานกะ (Group {r33.nightGroup}):</p>
+                                {employeesOnNight.length > 0 ? (
+                                  <ul className="list-disc list-inside pl-1 space-y-0.5 font-semibold">
+                                    {employeesOnNight.map(o => (
+                                      <li key={o.id}>{o.name} <span className="text-slate-400 font-mono text-[9px]">({o.role === 'shift_leader' ? '⭐ Leader' : 'Member'})</span></li>
+                                    ))}
+                                  </ul>
+                                ) : <p className="text-slate-400 pl-1">ไม่มีข้อมูลพนักงานที่ลงทะเบียนในกะ {r33.nightGroup}</p>}
+
+                                <p className="font-bold text-slate-900 mt-2">ผู้ช่วยสนับสนุน (Group {r42.nightGroup}):</p>
+                                {assistantsOnNight.length > 0 ? (
+                                  <ul className="list-disc list-inside pl-1 space-y-0.5 font-semibold">
+                                    {assistantsOnNight.map(o => <li key={o.id}>{o.name} <span className="text-slate-400 font-mono text-[9px]">(Assistant)</span></li>)}
+                                  </ul>
+                                ) : <p className="text-slate-400 pl-1">ไม่มีข้อมูลผู้ช่วยที่ลงทะเบียนในกะ {r42.nightGroup}</p>}
+                              </div>
+                            </div>
+
+                            {/* Off Duty details */}
+                            <div className="border-l-4 border-slate-400 bg-slate-50/50 p-3 rounded-r-xl space-y-2">
+                              <h4 className="text-xs font-black text-slate-600 uppercase flex items-center gap-1">
+                                <Shuffle className="w-3.5 h-3.5" /> เวรหยุดกะ (OFF DUTY)
+                              </h4>
+                              <div className="text-[11px] space-y-1 text-slate-500 font-medium leading-relaxed">
+                                <p><span className="font-bold text-slate-700">พนักงานพัก (Groups {r33.offDayGroup}, {r33.offNightGroup}):</span> {employeesOff.length > 0 ? employeesOff.map(o => o.name).join(', ') : 'ไม่มีข้อมูล'}</p>
+                                <p><span className="font-bold text-slate-700">ผู้ช่วยพัก (Group {r42.offGroup}):</span> {assistantsOff.length > 0 ? assistantsOff.map(o => o.name).join(', ') : 'ไม่มีข้อมูล'}</p>
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })()}
+                  </div>
+
+                  {/* Right Column: Range Report View */}
+                  <div className="lg:col-span-2 bg-white rounded-2xl shadow-sm border border-slate-200 p-5 space-y-4">
+                    <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 border-b border-slate-100 pb-3">
+                      <h3 className="text-sm font-black text-indigo-700 uppercase tracking-wider flex items-center gap-1.5">
+                        <Printer className="w-4 h-4" />
+                        2. พิมพ์ตารางเวรแบบช่วงวันที่ (Roster Range Matrix)
+                      </h3>
+                      <button
+                        type="button"
+                        onClick={() => window.print()}
+                        className="px-3 py-1.5 bg-slate-900 text-white font-bold rounded-lg text-xs hover:bg-slate-800 transition-colors cursor-pointer flex items-center gap-1 shadow-sm"
+                      >
+                        <Printer className="w-3.5 h-3.5" /> พิมพ์เอกสารตารางเวร
+                      </button>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <label className="block text-xs font-bold text-slate-600 mb-1">วันที่เริ่มต้น (Start Date)</label>
+                        <input 
+                          type="date" 
+                          value={startDate} 
+                          onChange={e => setStartDate(e.target.value)}
+                          className="w-full px-3 py-1.5 border border-slate-200 rounded-lg text-xs font-semibold bg-slate-50 focus:bg-white" 
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-bold text-slate-600 mb-1">วันที่สิ้นสุด (End Date)</label>
+                        <input 
+                          type="date" 
+                          value={endDate} 
+                          onChange={e => setEndDate(e.target.value)}
+                          className="w-full px-3 py-1.5 border border-slate-200 rounded-lg text-xs font-semibold bg-slate-50 focus:bg-white" 
+                        />
+                      </div>
+                    </div>
+
+                    <div className="overflow-x-auto border border-slate-150 rounded-xl shadow-xs print:border-none print:shadow-none max-h-[500px] overflow-y-auto">
+                      <table className="w-full text-left border-collapse text-xs">
+                        <thead>
+                          <tr className="bg-slate-100 text-slate-700 border-b border-slate-200 font-bold sticky top-0 z-15">
+                            <th className="p-3">วันที่ & วันธรรมดา</th>
+                            <th className="p-3 border-l">พนักงานปฏิบัติการ 3-3 (Employees)</th>
+                            <th className="p-3 border-l">ผู้ช่วยสนับสนุน 4-2 (Assistants)</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-150">
+                          {(() => {
+                            const rows = [];
+                            let current = new Date(startDate + 'T00:00:00');
+                            const last = new Date(endDate + 'T00:00:00');
+                            
+                            // limit safe iteration to prevent browser freeze
+                            let iterations = 0;
+                            while (current <= last && iterations < 31) {
+                              iterations++;
+                              const queryD = new Date(current);
+                              const r33 = calculate33Groups(queryD);
+                              const r42 = calculate42Groups(queryD);
+
+                              // Active people lists
+                              const employeesOnDay = operators.filter(o => o.isActive && (!o.classification || o.classification === 'employee') && o.shiftGroup === r33.dayGroup);
+                              const employeesOnNight = operators.filter(o => o.isActive && (!o.classification || o.classification === 'employee') && o.shiftGroup === r33.nightGroup);
+                              const employeesOff = operators.filter(o => o.isActive && (!o.classification || o.classification === 'employee') && (o.shiftGroup === r33.offDayGroup || o.shiftGroup === r33.offNightGroup));
+
+                              const assistantsOnDay = operators.filter(o => o.isActive && o.classification === 'assistant' && o.shiftGroup === r42.dayGroup);
+                              const assistantsOnNight = operators.filter(o => o.isActive && o.classification === 'assistant' && o.shiftGroup === r42.nightGroup);
+                              const assistantsOff = operators.filter(o => o.isActive && o.classification === 'assistant' && o.shiftGroup === r42.offGroup);
+
+                              rows.push(
+                                <tr key={queryD.getTime()} className="hover:bg-slate-50/50 transition-colors">
+                                  <td className="p-3 font-semibold text-slate-900 bg-slate-50/50 min-w-[130px]">
+                                    <div className="font-extrabold">{getThaiDayName(queryD)} {queryD.getDate()} {getThaiMonthName(queryD).substring(0, 6)}</div>
+                                    <div className="text-[10px] text-slate-400 font-semibold font-mono mt-0.5">
+                                      3-3: D{r33.cycleDay} | 4-2: D{r42.cycleDay}
+                                    </div>
+                                  </td>
+                                  <td className="p-3 border-l space-y-1.5 text-[11px] leading-relaxed">
+                                    <div>
+                                      <span className="inline-block px-1.5 py-0.2 bg-amber-100 text-amber-800 rounded font-black text-[9px] mr-1">🌞 DAY (กะ {r33.dayGroup})</span>
+                                      <span className="font-semibold text-slate-800">
+                                        {employeesOnDay.map(o => `${o.name}${o.role === 'shift_leader' ? ' (Leader)' : ''}`).join(', ') || 'ไม่มีข้อมูล'}
+                                      </span>
+                                    </div>
+                                    <div>
+                                      <span className="inline-block px-1.5 py-0.2 bg-indigo-100 text-indigo-800 rounded font-black text-[9px] mr-1">🌙 NIGHT (กะ {r33.nightGroup})</span>
+                                      <span className="font-semibold text-slate-800">
+                                        {employeesOnNight.map(o => `${o.name}${o.role === 'shift_leader' ? ' (Leader)' : ''}`).join(', ') || 'ไม่มีข้อมูล'}
+                                      </span>
+                                    </div>
+                                    <div className="text-[10px] text-slate-400 leading-none">
+                                      <span className="font-bold">OFF (พัก กะ {r33.offDayGroup}, {r33.offNightGroup}):</span> {employeesOff.map(o => o.name).join(', ') || 'ไม่มีข้อมูล'}
+                                    </div>
+                                  </td>
+                                  <td className="p-3 border-l space-y-1.5 text-[11px] leading-relaxed">
+                                    <div>
+                                      <span className="inline-block px-1.5 py-0.2 bg-amber-100 text-amber-800 rounded font-black text-[9px] mr-1">🌞 DAY (กะ {r42.dayGroup})</span>
+                                      <span className="font-semibold text-slate-800">
+                                        {assistantsOnDay.map(o => o.name).join(', ') || 'ไม่มีข้อมูล'}
+                                      </span>
+                                    </div>
+                                    <div>
+                                      <span className="inline-block px-1.5 py-0.2 bg-indigo-100 text-indigo-800 rounded font-black text-[9px] mr-1">🌙 NIGHT (กะ {r42.nightGroup})</span>
+                                      <span className="font-semibold text-slate-800">
+                                        {assistantsOnNight.map(o => o.name).join(', ') || 'ไม่มีข้อมูล'}
+                                      </span>
+                                    </div>
+                                    <div className="text-[10px] text-slate-400 leading-none">
+                                      <span className="font-bold">OFF (พัก กะ {r42.offGroup}):</span> {assistantsOff.map(o => o.name).join(', ') || 'ไม่มีข้อมูล'}
+                                    </div>
+                                  </td>
+                                </tr>
+                              );
+                              current = addDays(current, 1);
+                            }
+                            return rows;
+                          })()}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
         )}
 
         {activeTab === 'equipment' && (
