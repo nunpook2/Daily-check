@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { fetchEquipments, fetchCheckItems, fetchLogs, saveCheckLog, fetchOperators, fetchTimeWindowSettings } from '../lib/db';
-import { Equipment, CheckItem, CheckResponse, Operator, TimeWindowSettings } from '../types';
+import { Equipment, CheckItem, CheckResponse, Operator, TimeWindowSettings, getEquipmentShiftScope, getCheckItemShiftScope, calculate33ShiftGroups } from '../types';
 import { format, differenceInCalendarDays } from 'date-fns';
 import { 
   ChevronRight, 
@@ -65,11 +65,17 @@ export default function PerformCheck({ onSaved, initialEqCode, selectedDept = 'a
     const shouldSkipOnUse = standbyMode === 'testing' || standbyMode === 'unused';
     return items.filter(item => {
       if (shouldSkipOnUse && item.frequency === 'on-use') return false;
+      
+      // Filter out items designated exclusively for the other shift
+      const itemScope = getCheckItemShiftScope(item);
+      if (shift === 'DAY' && itemScope === 'NIGHT') return false;
+      if (shift === 'NIGHT' && itemScope === 'DAY') return false;
+
       if (checkType === 'all') return true;
       if (checkType === 'daily' && (!item.frequency || item.frequency === 'daily')) return true;
       return item.frequency === checkType;
     });
-  }, [items, checkType, standbyMode]);
+  }, [items, checkType, standbyMode, shift]);
 
   const hasOnUseItems = useMemo(() => {
     return items.some(item => item.frequency === 'on-use');
@@ -287,7 +293,15 @@ export default function PerformCheck({ onSaved, initialEqCode, selectedDept = 'a
     setSelectedEq(eq);
     setResponses({});
     setOperatorId('');
-    setShift('DAY');
+    const eqScope = getEquipmentShiftScope(eq);
+    if (eqScope === 'NIGHT') {
+      setShift('NIGHT');
+    } else if (eqScope === 'DAY') {
+      setShift('DAY');
+    } else {
+      const curHour = new Date().getHours();
+      setShift((curHour >= 8 && curHour < 20) ? 'DAY' : 'NIGHT');
+    }
     setNotes('');
     setStandbyMode('active');
   };
@@ -322,8 +336,13 @@ export default function PerformCheck({ onSaved, initialEqCode, selectedDept = 'a
     const op = operators.find(o => o.employeeId === operatorId);
     const opName = op ? op.name : operatorId;
 
-    // Create default passing responses for all check items for this equipment
-    const eqItems = items;
+    // Create default passing responses for check items applicable to this shift
+    const eqItems = items.filter(item => {
+      const itemScope = getCheckItemShiftScope(item);
+      if (shift === 'DAY' && itemScope === 'NIGHT') return false;
+      if (shift === 'NIGHT' && itemScope === 'DAY') return false;
+      return true;
+    });
     const finalResponses = eqItems.map(item => ({
       checkItemId: item.id!,
       type: item.type,
@@ -381,7 +400,13 @@ export default function PerformCheck({ onSaved, initialEqCode, selectedDept = 'a
         return;
       }
       let allNormal = true;
-      const finalResponses: CheckResponse[] = items.map(item => {
+      const applicableItems = items.filter(item => {
+        const itemScope = getCheckItemShiftScope(item);
+        if (shift === 'DAY' && itemScope === 'NIGHT') return false;
+        if (shift === 'NIGHT' && itemScope === 'DAY') return false;
+        return true;
+      });
+      const finalResponses: CheckResponse[] = applicableItems.map(item => {
          const shouldSkipOnUse = standbyMode === 'testing' || standbyMode === 'unused';
          const isFilteredOut = shouldSkipOnUse && item.frequency === 'on-use';
          if (isFilteredOut) {
@@ -645,15 +670,39 @@ export default function PerformCheck({ onSaved, initialEqCode, selectedDept = 'a
                     <ArrowLeft className="w-5 h-5" />
                   </button>
                   <div className="min-w-0 flex-1">
-                     <div className="flex items-center gap-2 mb-1">
+                     <div className="flex items-center gap-2 mb-1 flex-wrap">
                         <span className="px-2 py-0.5 rounded-md bg-indigo-500/30 text-indigo-100 text-[9px] font-bold uppercase tracking-wider border border-indigo-400/20">แบบตรวจสอบ</span>
                         <span className="px-2 py-0.5 rounded-md bg-white/10 text-white text-[9px] font-mono font-bold tracking-widest border border-white/10">{selectedEq.code}</span>
+                        {getEquipmentShiftScope(selectedEq) === 'DAY' && (
+                           <span className="px-2 py-0.5 rounded-md bg-amber-500/30 text-amber-200 text-[9px] font-bold border border-amber-400/20">
+                             ☀️ ตรวจเฉพาะกะเช้า
+                           </span>
+                        )}
+                        {getEquipmentShiftScope(selectedEq) === 'NIGHT' && (
+                           <span className="px-2 py-0.5 rounded-md bg-indigo-500/40 text-indigo-200 text-[9px] font-bold border border-indigo-300/30">
+                             🌙 ตรวจเฉพาะกะดึก
+                           </span>
+                        )}
                      </div>
                      <h2 className="text-xl sm:text-2xl font-black text-white leading-tight truncate">{selectedEq.name}</h2>
                      <p className="text-indigo-300 text-[10px] sm:text-xs font-semibold truncate mt-0.5">สถานที่: {(selectedEq.location || 'คลังทดสอบ').replace('น้อง', 'ห้อง')}</p>
                   </div>
                 </div>
              </div>
+
+             {/* Shift Mismatch Advisory Banner */}
+             {shift === 'DAY' && getEquipmentShiftScope(selectedEq) === 'NIGHT' && (
+                <div className="mx-6 mt-4 p-3.5 bg-indigo-50 border border-indigo-200 rounded-2xl flex items-center gap-2.5 text-indigo-900 text-xs font-bold">
+                   <span className="text-base shrink-0">🌙</span>
+                   <span>หมายเหตุ: เครื่องนี้เป็นรายการตรวจเฉพาะ [กะดึก] หากไม่มีการตรวจในกะเช้า จะไม่นำไปคิดเป็นรายการค้างตรวจของกะเช้า</span>
+                </div>
+             )}
+             {shift === 'NIGHT' && getEquipmentShiftScope(selectedEq) === 'DAY' && (
+                <div className="mx-6 mt-4 p-3.5 bg-amber-50 border border-amber-200 rounded-2xl flex items-center gap-2.5 text-amber-900 text-xs font-bold">
+                   <span className="text-base shrink-0">☀️</span>
+                   <span>หมายเหตุ: เครื่องนี้เป็นรายการตรวจเฉพาะ [กะเช้า] หากไม่มีการตรวจในกะดึก จะไม่นำไปคิดเป็นรายการค้างตรวจของกะดึก</span>
+                </div>
+             )}
 
              <form onSubmit={handleSubmit} className="p-5 sm:p-6 space-y-6 bg-slate-50/50">
                 {/* ZONE 1: ผู้สแกนตรวจและกะการบันทึก (Inspector Info Card) */}
@@ -704,15 +753,7 @@ export default function PerformCheck({ onSaved, initialEqCode, selectedDept = 'a
                                 setShift('DAY');
                               }
                             } else {
-                              const cycleDay = ((diffDays % 12) + 12) % 12 + 1;
-                              let dayGroup = 'A';
-                              let nightGroup = 'B';
-                              
-                              if (cycleDay >= 1 && cycleDay <= 3) { dayGroup = 'A'; nightGroup = 'B'; }
-                              else if (cycleDay >= 4 && cycleDay <= 6) { dayGroup = 'C'; nightGroup = 'D'; }
-                              else if (cycleDay >= 7 && cycleDay <= 9) { dayGroup = 'B'; nightGroup = 'A'; }
-                              else if (cycleDay >= 10 && cycleDay <= 12) { dayGroup = 'D'; nightGroup = 'C'; }
-                              
+                              const { dayGroup, nightGroup } = calculate33ShiftGroups(new Date());
                               if (opGroup === dayGroup) {
                                 setShift('DAY');
                               } else if (opGroup === nightGroup) {
@@ -727,7 +768,6 @@ export default function PerformCheck({ onSaved, initialEqCode, selectedDept = 'a
                       >
                         <option value="" className="text-slate-900 font-bold">-- แตะเพื่อเลือกรายชื่อ --</option>
                         {operators.map(op => <option key={op.id} value={op.employeeId} className="text-slate-900 font-bold">{op.name} ({op.employeeId})</option>)}
-                        <option value="sc-101" className="text-slate-900 font-bold">Sarah Connor (SC-101)</option>
                         <option value="guest" className="text-slate-900 font-bold">ผู้ตรวจสำรอง / บุคคลอื่น (Guest)</option>
                       </select>
                       <div className="absolute right-4 top-1/2 -translate-y-1/2 pointer-events-none text-slate-800 font-extrabold text-sm">▼</div>

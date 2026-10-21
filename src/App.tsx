@@ -15,12 +15,15 @@ import {
   ChevronRight
 } from 'lucide-react';
 import { cn } from './lib/utils';
+import { fetchOperators } from './lib/db';
+import { Operator, calculate33ShiftGroups } from './types';
 
 type View = 'dashboard' | 'check' | 'settings' | 'ooc_logs';
 
 function App() {
   const [currentView, setCurrentView] = useState<View>('dashboard');
   const [initialEqCode, setInitialEqCode] = useState<string | undefined>();
+  const [activeOperator, setActiveOperator] = useState<Operator | null>(null);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -29,7 +32,26 @@ function App() {
       setInitialEqCode(eqCode);
       setCurrentView('check');
     }
-  }, []);
+
+    const loadOp = async () => {
+      try {
+        const ops = await fetchOperators();
+        if (ops && ops.length > 0) {
+          const now = new Date();
+          const { dayGroup, nightGroup } = calculate33ShiftGroups(now);
+          const currentHour = now.getHours();
+          const currentShiftGroup = (currentHour >= 8 && currentHour < 20) ? dayGroup : nightGroup;
+          
+          const leader = ops.find(o => o.isActive && o.shiftGroup === currentShiftGroup && o.role === 'shift_leader');
+          const member = ops.find(o => o.isActive && o.shiftGroup === currentShiftGroup);
+          setActiveOperator(leader || member || ops[0]);
+        }
+      } catch (err) {
+        console.warn("Could not load operator info", err);
+      }
+    };
+    loadOp();
+  }, [currentView]);
 
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col md:flex-row text-slate-800 font-sans selection:bg-indigo-100 selection:text-indigo-900">
@@ -108,8 +130,12 @@ function App() {
                   <User className="w-4 h-4" />
                </div>
                <div className="min-w-0 flex-1">
-                  <p className="text-[11px] font-black text-slate-800 truncate">Sarah Connor</p>
-                  <p className="text-[9px] text-slate-400 font-bold font-mono">SC-101 · หัวหน้าผู้ตรวจ</p>
+                  <p className="text-[11px] font-black text-slate-800 truncate">
+                    {activeOperator ? activeOperator.name : 'เจ้าหน้าที่ปฏิบัติงาน'}
+                  </p>
+                  <p className="text-[9px] text-slate-400 font-bold font-mono truncate">
+                    {activeOperator ? `${activeOperator.employeeId} · ${activeOperator.role === 'shift_leader' ? 'หัวหน้ากะ' : 'พนักงานประจำกะ'} (${activeOperator.shiftGroup ? 'กะ ' + activeOperator.shiftGroup : 'ไม่ระบุกะ'})` : 'ระบบบันทึกผล'}
+                  </p>
                </div>
                <div className="w-2 h-2 rounded-full bg-emerald-500 shrink-0 shadow-[0_0_8px_rgba(16,185,129,0.3)]"></div>
             </div>
@@ -146,7 +172,15 @@ function App() {
       {/* Main Content Stage */}
       <main className="flex-1 p-4 sm:p-6 md:p-8 lg:p-10 mb-20 md:mb-0 max-h-screen md:overflow-y-auto relative z-10 w-full bg-slate-50">
          <div className={currentView === 'settings' ? "w-full pb-10" : "w-full max-w-7xl mx-auto pb-10"}>
-            {currentView === 'dashboard' && <Dashboard selectedDept="all" />}
+            {currentView === 'dashboard' && (
+              <Dashboard 
+                selectedDept="all" 
+                onNavigateToCheck={(eqCode) => {
+                  setInitialEqCode(eqCode || '');
+                  setCurrentView('check');
+                }}
+              />
+            )}
             {currentView === 'ooc_logs' && <OocLogs selectedDept="all" />}
             {currentView === 'check' && (
               <PerformCheck onSaved={() => setCurrentView('dashboard')} initialEqCode={initialEqCode} selectedDept="all" />

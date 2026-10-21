@@ -1,34 +1,16 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { differenceInCalendarDays, addDays, format } from 'date-fns';
 import { fetchEquipments, fetchCheckItems, addEquipment, deleteEquipment, updateEquipment, addCheckItem, deleteCheckItem, updateCheckItem, fetchOperators, addOperator, deleteOperator, updateOperator, fetchTimeWindowSettings, saveTimeWindowSettings } from '../lib/db';
-import { Equipment, CheckItem, Operator, TimeWindowSettings } from '../types';
+import { Equipment, CheckItem, Operator, TimeWindowSettings, ShiftScope, getEquipmentShiftScope, getCheckItemShiftScope, calculate33ShiftGroups } from '../types';
 import { Plus, Settings2, Users, MonitorSmartphone, QrCode, X, ListChecks, Info, Trash2, Edit2, Calendar, Printer, Clock, ArrowRight, Shuffle, Search, Briefcase } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { motion, AnimatePresence } from 'motion/react';
 import { QRCodeSVG } from 'qrcode.react';
 
-// Helper for 3-3 rotation (12-Day Cycle)
+// Helper for 3-3 rotation (12-Day Continuous Cycle based on Official Factory Shift Table)
+// Automatically handles 2026, 2027, 2028, 2029, and beyond with 100% precision
 const calculate33Groups = (date: Date) => {
-  const anchorDate = new Date('2026-01-01T00:00:00');
-  const diffDays = differenceInCalendarDays(date, anchorDate);
-  const cycleDay = ((diffDays % 12) + 12) % 12 + 1;
-  
-  let dayGroup: 'A' | 'B' | 'C' | 'D' = 'A';
-  let nightGroup: 'A' | 'B' | 'C' | 'D' = 'B';
-  let offDayGroup: 'A' | 'B' | 'C' | 'D' = 'D';
-  let offNightGroup: 'A' | 'B' | 'C' | 'D' = 'C';
-  
-  if (cycleDay >= 1 && cycleDay <= 3) {
-    dayGroup = 'A'; nightGroup = 'B'; offDayGroup = 'D'; offNightGroup = 'C';
-  } else if (cycleDay >= 4 && cycleDay <= 6) {
-    dayGroup = 'C'; nightGroup = 'D'; offDayGroup = 'A'; offNightGroup = 'B';
-  } else if (cycleDay >= 7 && cycleDay <= 9) {
-    dayGroup = 'B'; nightGroup = 'A'; offDayGroup = 'C'; offNightGroup = 'D';
-  } else if (cycleDay >= 10 && cycleDay <= 12) {
-    dayGroup = 'D'; nightGroup = 'C'; offDayGroup = 'B'; offNightGroup = 'A';
-  }
-  
-  return { cycleDay, dayGroup, nightGroup, offDayGroup, offNightGroup };
+  return calculate33ShiftGroups(date);
 };
 
 // Helper for 4-2 rotation (18-Day Cycle)
@@ -277,6 +259,7 @@ export default function Settings() {
   const [editingOpShiftGroup, setEditingOpShiftGroup] = useState<'A' | 'B' | 'C' | 'D'>('A');
 
   // Roster calculator states
+  const [calendarYear, setCalendarYear] = useState<number>(2026);
   const [singleDate, setSingleDate] = useState<string>(() => {
     const today = new Date();
     const year = today.getFullYear();
@@ -300,10 +283,11 @@ export default function Settings() {
     return `${year}-${month}-${day}`;
   });
 
-  const [dayStart, setDayStart] = useState('08:00');
-  const [dayEnd, setDayEnd] = useState('10:00');
-  const [nightStart, setNightStart] = useState('20:00');
-  const [nightEnd, setNightEnd] = useState('22:00');
+  const initialTw = useMemo(() => fetchTimeWindowSettings(), []);
+  const [dayStart, setDayStart] = useState(initialTw.dayStart || '08:00');
+  const [dayEnd, setDayEnd] = useState(initialTw.dayEnd || '10:00');
+  const [nightStart, setNightStart] = useState(initialTw.nightStart || '20:00');
+  const [nightEnd, setNightEnd] = useState(initialTw.nightEnd || '22:00');
   
   // Modal state
   const [qrModalEq, setQrModalEq] = useState<Equipment | null>(null);
@@ -313,6 +297,7 @@ export default function Settings() {
   const [newEqCode, setNewEqCode] = useState('');
   const [newEqLoc, setNewEqLoc] = useState('');
   const [newEqDoc, setNewEqDoc] = useState('');
+  const [newEqShift, setNewEqShift] = useState<ShiftScope>('ALL');
   
   const [editingEqId, setEditingEqId] = useState<string | null>(null);
   const [editingEqData, setEditingEqData] = useState<Partial<Equipment>>({});
@@ -342,6 +327,13 @@ export default function Settings() {
       fetchCheckItems(),
       fetchOperators()
     ]);
+    const tw = fetchTimeWindowSettings();
+    if (tw) {
+      setDayStart(tw.dayStart || '08:00');
+      setDayEnd(tw.dayEnd || '10:00');
+      setNightStart(tw.nightStart || '20:00');
+      setNightEnd(tw.nightEnd || '22:00');
+    }
     setEquipments(eqs);
     setCheckItems(itms);
     setOperators(ops);
@@ -362,10 +354,11 @@ export default function Settings() {
       code: newEqCode,
       location: newEqLoc,
       referenceDocNo: newEqDoc,
+      applicableShift: newEqShift,
       status: 'active',
       createdAt: Date.now()
     });
-    setNewEqName(''); setNewEqCode(''); setNewEqLoc(''); setNewEqDoc('');
+    setNewEqName(''); setNewEqCode(''); setNewEqLoc(''); setNewEqDoc(''); setNewEqShift('ALL');
     await loadData();
   };
 
@@ -1126,6 +1119,220 @@ export default function Settings() {
                     </div>
                   </div>
                 </div>
+
+                {/* 3. OFFICIAL 12-MONTH ANNUAL SHIFT MASTER TABLE (Matching Factory Standard) */}
+                <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-5 sm:p-6 space-y-4">
+                  <div className="flex flex-col sm:flex-row justify-between sm:items-center gap-3 border-b border-slate-100 pb-4">
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <span className="px-2 py-0.5 rounded-md bg-indigo-50 border border-indigo-200 text-indigo-700 text-[10px] font-black uppercase tracking-wider">
+                          Standard 3-3 Master Shift Calendar
+                        </span>
+                        <span className="text-[10px] font-bold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">
+                          ✓ คำนวณอัตโนมัติข้ามปี
+                        </span>
+                      </div>
+                      <h3 className="text-base sm:text-lg font-black text-slate-900 mt-1 flex items-center gap-2">
+                        <span>📅 ตารางเวรกะ 3 วัน หยุด 3 วัน ประจำปี (12 เดือนเต็ม)</span>
+                      </h3>
+                      <p className="text-xs text-slate-500 font-medium">
+                        โครงสร้างตรงตามเอกสารตารางกะทางการของโรงงาน และหมุนเวียนต่อเนื่องอัตโนมัติสำหรับปี 2026, 2027, 2028, 2029 เป็นต้นไป
+                      </p>
+                    </div>
+
+                    {/* Year Selector */}
+                    <div className="flex items-center gap-2 bg-slate-50 p-1.5 rounded-xl border border-slate-200 self-start sm:self-auto">
+                      <span className="text-xs font-black text-slate-600 pl-2">เลือกปี:</span>
+                      <select 
+                        value={calendarYear}
+                        onChange={e => setCalendarYear(Number(e.target.value))}
+                        className="px-3 py-1.5 bg-white border border-slate-300 rounded-lg text-sm font-black text-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 shadow-2xs cursor-pointer"
+                      >
+                        {[2025, 2026, 2027, 2028, 2029, 2030, 2031, 2032].map(y => (
+                          <option key={y} value={y}>
+                            ค.ศ. {y} (พ.ศ. {y + 543}) {y === 2026 ? '★ ปีปัจจุบัน' : ''}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+
+                  {/* Legend & Summary */}
+                  <div className="flex flex-wrap items-center gap-3 text-xs bg-slate-50/80 p-3 rounded-xl border border-slate-100">
+                    <span className="font-bold text-slate-500">สัญลักษณ์กลุ่มกะ:</span>
+                    <span className="inline-flex items-center gap-1 font-bold text-emerald-800 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded">
+                      <span className="w-2.5 h-2.5 rounded-full bg-emerald-500"></span> กะ A
+                    </span>
+                    <span className="inline-flex items-center gap-1 font-bold text-amber-800 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded">
+                      <span className="w-2.5 h-2.5 rounded-full bg-amber-500"></span> กะ B
+                    </span>
+                    <span className="inline-flex items-center gap-1 font-bold text-sky-800 bg-sky-50 border border-sky-200 px-2 py-0.5 rounded">
+                      <span className="w-2.5 h-2.5 rounded-full bg-sky-500"></span> กะ C
+                    </span>
+                    <span className="inline-flex items-center gap-1 font-bold text-purple-800 bg-purple-50 border border-purple-200 px-2 py-0.5 rounded">
+                      <span className="w-2.5 h-2.5 rounded-full bg-purple-600"></span> กะ D
+                    </span>
+                    <span className="ml-auto text-[11px] text-slate-400 font-mono">
+                      สูตรหมุนเวียน 12 วัน: A → C → B → D
+                    </span>
+                  </div>
+
+                  {/* 12-Month Table matching PDF style */}
+                  <div className="overflow-x-auto custom-scrollbar border border-slate-200 rounded-2xl bg-white shadow-2xs">
+                    <table className="w-full text-center border-collapse min-w-[980px] text-[10px]">
+                      <thead>
+                        <tr className="bg-slate-900 text-white font-mono text-[10px]">
+                          <th className="p-2 border-r border-slate-800 w-32 text-left pl-3 font-sans font-black">เดือน / กะ</th>
+                          {Array.from({ length: 31 }, (_, i) => (
+                            <th key={i + 1} className="p-1 border-r border-slate-800 w-7 font-black">
+                              {i + 1}
+                            </th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-200 font-mono">
+                        {(() => {
+                          const thaiMonthDefs = [
+                            { num: 1, th: 'มกราคม', en: 'JANUARY' },
+                            { num: 2, th: 'กุมภาพันธ์', en: 'FEBRUARY' },
+                            { num: 3, th: 'มีนาคม', en: 'MARCH' },
+                            { num: 4, th: 'เมษายน', en: 'APRIL' },
+                            { num: 5, th: 'พฤษภาคม', en: 'MAY' },
+                            { num: 6, th: 'มิถุนายน', en: 'JUNE' },
+                            { num: 7, th: 'กรกฎาคม', en: 'JULY' },
+                            { num: 8, th: 'สิงหาคม', en: 'AUGUST' },
+                            { num: 9, th: 'กันยายน', en: 'SEPTEMBER' },
+                            { num: 10, th: 'ตุลาคม', en: 'OCTOBER' },
+                            { num: 11, th: 'พฤศจิกายน', en: 'NOVEMBER' },
+                            { num: 12, th: 'ธันวาคม', en: 'DECEMBER' }
+                          ];
+
+                          const dayShortNames = ['SU', 'M', 'TU', 'W', 'TH', 'F', 'SA'];
+
+                          const getGroupStyle = (g: string) => {
+                            if (g === 'A') return 'bg-emerald-100 text-emerald-800 font-black';
+                            if (g === 'B') return 'bg-amber-100 text-amber-800 font-black';
+                            if (g === 'C') return 'bg-sky-100 text-sky-800 font-black';
+                            if (g === 'D') return 'bg-purple-100 text-purple-800 font-black';
+                            return 'text-slate-400';
+                          };
+
+                          return thaiMonthDefs.map((mDef) => {
+                            const daysInMonth = new Date(calendarYear, mDef.num, 0).getDate();
+                            const monthData = Array.from({ length: 31 }, (_, dayIdx) => {
+                              const dayNum = dayIdx + 1;
+                              if (dayNum > daysInMonth) return null;
+                              const d = new Date(calendarYear, mDef.num - 1, dayNum, 12, 0, 0);
+                              const shiftInfo = calculate33ShiftGroups(d);
+                              const dayOfWeek = dayShortNames[d.getDay()];
+                              const isWeekend = d.getDay() === 0 || d.getDay() === 6;
+                              return {
+                                dayNum,
+                                dayOfWeek,
+                                isWeekend,
+                                ...shiftInfo
+                              };
+                            });
+
+                            return (
+                              <React.Fragment key={mDef.num}>
+                                {/* Month Header & Day of Week */}
+                                <tr className="bg-slate-100/80 font-bold border-t-2 border-slate-300 text-slate-600">
+                                  <td className="p-1 text-left pl-3 font-sans font-black text-slate-800 border-r border-slate-200 text-[11px]">
+                                    {mDef.th} <span className="text-[9px] text-slate-400 block font-mono font-normal">{mDef.en}</span>
+                                  </td>
+                                  {monthData.map((d, idx) => (
+                                    <td 
+                                      key={idx} 
+                                      className={cn(
+                                        "p-0.5 border-r border-slate-200 font-mono text-[9px]",
+                                        !d ? "bg-slate-100/40 text-transparent" : (d.isWeekend ? "bg-amber-50 text-amber-900 font-black" : "text-slate-600")
+                                      )}
+                                    >
+                                      {d ? d.dayOfWeek : ''}
+                                    </td>
+                                  ))}
+                                </tr>
+
+                                {/* DAY Shift Row */}
+                                <tr className="hover:bg-slate-50 transition-colors">
+                                  <td className="p-1 text-left pl-3 font-sans font-bold text-slate-700 border-r border-slate-200 bg-amber-50/20 text-[10px]">
+                                    ☀️ DAY
+                                  </td>
+                                  {monthData.map((d, idx) => (
+                                    <td 
+                                      key={idx} 
+                                      className={cn(
+                                        "p-1 border-r border-slate-200 text-[10px]",
+                                        d ? getGroupStyle(d.dayGroup) : "bg-slate-50 text-transparent"
+                                      )}
+                                    >
+                                      {d ? d.dayGroup : ''}
+                                    </td>
+                                  ))}
+                                </tr>
+
+                                {/* NIGHT Shift Row */}
+                                <tr className="hover:bg-slate-50 transition-colors">
+                                  <td className="p-1 text-left pl-3 font-sans font-bold text-slate-700 border-r border-slate-200 bg-indigo-50/20 text-[10px]">
+                                    🌙 NIGHT
+                                  </td>
+                                  {monthData.map((d, idx) => (
+                                    <td 
+                                      key={idx} 
+                                      className={cn(
+                                        "p-1 border-r border-slate-200 text-[10px]",
+                                        d ? getGroupStyle(d.nightGroup) : "bg-slate-50 text-transparent"
+                                      )}
+                                    >
+                                      {d ? d.nightGroup : ''}
+                                    </td>
+                                  ))}
+                                </tr>
+
+                                {/* Off Day Row */}
+                                <tr className="hover:bg-slate-50 transition-colors text-slate-500 bg-slate-50/40">
+                                  <td className="p-0.5 text-left pl-3 font-sans text-slate-400 border-r border-slate-200 text-[9px]">
+                                    Off day
+                                  </td>
+                                  {monthData.map((d, idx) => (
+                                    <td 
+                                      key={idx} 
+                                      className={cn(
+                                        "p-0.5 border-r border-slate-200 text-[9px] font-bold",
+                                        d ? "text-slate-500" : "text-transparent"
+                                      )}
+                                    >
+                                      {d ? d.offDayGroup : ''}
+                                    </td>
+                                  ))}
+                                </tr>
+
+                                {/* Off Night Row */}
+                                <tr className="hover:bg-slate-50 transition-colors text-slate-500 bg-slate-50/40 border-b border-slate-300">
+                                  <td className="p-0.5 text-left pl-3 font-sans text-slate-400 border-r border-slate-200 text-[9px]">
+                                    Off night
+                                  </td>
+                                  {monthData.map((d, idx) => (
+                                    <td 
+                                      key={idx} 
+                                      className={cn(
+                                        "p-0.5 border-r border-slate-200 text-[9px] font-bold",
+                                        d ? "text-slate-500" : "text-transparent"
+                                      )}
+                                    >
+                                      {d ? d.offNightGroup : ''}
+                                    </td>
+                                  ))}
+                                </tr>
+                              </React.Fragment>
+                            );
+                          });
+                        })()}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
               </div>
             )}
           </div>
@@ -1156,6 +1363,21 @@ export default function Settings() {
                       <label className="block text-sm text-slate-700 mb-1">Location</label>
                       <input type="text" value={newEqLoc} onChange={e => setNewEqLoc(e.target.value)}
                              className="w-full px-3 py-2 border border-slate-200 rounded-lg" />
+                   <div className="col-span-2">
+                      <label className="block text-sm font-semibold text-slate-700 mb-1">กะที่ต้องตรวจ (Applicable Shift)</label>
+                      <select 
+                        value={newEqShift} 
+                        onChange={e => setNewEqShift(e.target.value as ShiftScope)}
+                        className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm bg-white font-medium"
+                      >
+                         <option value="ALL">🔄 ตรวจทุกกะ (All Shifts - กะเช้าและกะดึก)</option>
+                         <option value="DAY">☀️ ตรวจเฉพาะกะเช้า (Day Shift Only - ไม่ค้างในกะดึก)</option>
+                         <option value="NIGHT">🌙 ตรวจเฉพาะกะดึก (Night Shift Only - ไม่ค้างในกะเช้า)</option>
+                      </select>
+                      <p className="text-[11px] text-slate-400 mt-1">
+                        กำหนดว่าอุปกรณ์นี้ต้องถูกตรวจในกะใด หากเลือกกะใดกะหนึ่ง อีกกะหนึ่งจะไม่ถูกนับเป็นรายการค้างตรวจ
+                      </p>
+                   </div>
                    </div>
                  </div>
                  <button type="submit" className="flex items-center gap-2 px-6 py-2.5 bg-indigo-600 text-white font-bold rounded-lg hover:bg-indigo-700">
@@ -1190,6 +1412,18 @@ export default function Settings() {
                                     <div>
                                        <label className="text-xs text-slate-500 mb-1 block">Reference Doc</label>
                                        <input type="text" value={editingEqData.referenceDocNo || ''} onChange={e => setEditingEqData({...editingEqData, referenceDocNo: e.target.value})} className="w-full text-sm px-2 py-1.5 border border-indigo-200 rounded focus:border-indigo-500" />
+                                     <div className="md:col-span-2">
+                                        <label className="text-xs text-slate-500 mb-1 block font-bold">กะที่ต้องตรวจ (Applicable Shift)</label>
+                                        <select 
+                                          value={editingEqData.applicableShift || getEquipmentShiftScope(editingEqData as Equipment)} 
+                                          onChange={e => setEditingEqData({...editingEqData, applicableShift: e.target.value as ShiftScope})}
+                                          className="w-full text-sm px-2 py-1.5 border border-indigo-200 rounded focus:border-indigo-500 bg-white font-medium"
+                                        >
+                                           <option value="ALL">🔄 ตรวจทุกกะ (All Shifts - กะเช้าและกะดึก)</option>
+                                           <option value="DAY">☀️ ตรวจเฉพาะกะเช้า (Day Shift Only - ไม่ค้างในกะดึก)</option>
+                                           <option value="NIGHT">🌙 ตรวจเฉพาะกะดึก (Night Shift Only - ไม่ค้างในกะเช้า)</option>
+                                        </select>
+                                     </div>
                                     </div>
                                  </div>
                                  <div className="flex justify-end gap-2 pt-2">
@@ -1202,6 +1436,21 @@ export default function Settings() {
                                  <div>
                                     <div className="flex items-baseline gap-2">
                                        <p className="font-bold text-slate-800">{eq.name}</p>
+                                        {getEquipmentShiftScope(eq) === 'DAY' && (
+                                           <span className="text-[10px] font-black px-1.5 py-0.5 rounded bg-amber-50 text-amber-700 border border-amber-200">
+                                              ☀️ เฉพาะกะเช้า
+                                           </span>
+                                        )}
+                                        {getEquipmentShiftScope(eq) === 'NIGHT' && (
+                                           <span className="text-[10px] font-black px-1.5 py-0.5 rounded bg-indigo-50 text-indigo-700 border border-indigo-200">
+                                              🌙 เฉพาะกะดึก
+                                           </span>
+                                        )}
+                                        {getEquipmentShiftScope(eq) === 'ALL' && (
+                                           <span className="text-[10px] font-black px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-700 border border-emerald-200">
+                                              🔄 ทุกกะ
+                                           </span>
+                                        )}
                                        <span className="text-xs font-mono text-slate-500 bg-slate-100 px-1.5 py-0.5 rounded">{eq.code}</span>
                                     </div>
                                     <div className="text-xs text-slate-500 mt-1 flex gap-3">
