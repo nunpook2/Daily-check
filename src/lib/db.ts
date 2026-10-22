@@ -35,6 +35,16 @@ const setLocalStorage = <T,>(key: string, value: T) => {
   }
 };
 
+// Helper to ensure any asynchronous Firestore operation never hangs the UI
+export function withTimeout<T>(promise: Promise<T>, timeoutMs = 3000): Promise<T> {
+  return Promise.race([
+    promise,
+    new Promise<T>((_, reject) => 
+      setTimeout(() => reject(new Error(`Firestore request timed out after ${timeoutMs}ms`)), timeoutMs)
+    )
+  ]);
+}
+
 // Helper to recursively remove undefined properties from nested objects/arrays before Firestore saving
 export function cleanObject<T>(obj: T): T {
   if (obj === undefined) return undefined as any;
@@ -227,7 +237,7 @@ let mockOperators: Operator[] = getSanitizedOperators();
 export async function fetchEquipments(): Promise<Equipment[]> {
   try {
     const q = query(collection(db, "equipments"));
-    const snapshot = await getDocs(q);
+    const snapshot = await withTimeout(getDocs(q), 3000);
     const list = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Equipment));
     if (list.length > 0) {
       mockEquipments = list;
@@ -236,47 +246,75 @@ export async function fetchEquipments(): Promise<Equipment[]> {
     }
     return mockEquipments;
   } catch (error) {
-    console.warn("Firestore access error, serving fallback data.", error);
+    console.warn("Firestore access error or timeout, serving fallback equipment data.", error);
     return mockEquipments;
   }
 }
 
 export async function addEquipment(equipment: Omit<Equipment, 'id'>): Promise<Equipment> {
   const cleanEq = cleanObject(equipment);
+  const mockId = Math.random().toString(36).substring(7);
+  const newEq = { ...equipment, id: mockId };
+  
+  // Optimistic update locally
+  mockEquipments.push(newEq);
+  setLocalStorage('lab_equipments', mockEquipments);
+
   try {
-    const docRef = await addDoc(collection(db, "equipments"), cleanEq);
-    const newEq = { ...equipment, id: docRef.id };
-    mockEquipments.push(newEq);
+    const docRef = await withTimeout(addDoc(collection(db, "equipments"), cleanEq), 3000);
+    newEq.id = docRef.id;
     setLocalStorage('lab_equipments', mockEquipments);
     return newEq;
   } catch (error) {
-    console.warn("Firestore save failed, using local mock.", error);
-    const mockId = Math.random().toString(36).substring(7);
-    const newEq = { ...equipment, id: mockId };
-    mockEquipments.push(newEq);
-    setLocalStorage('lab_equipments', mockEquipments);
+    console.warn("Firestore save equipment timed out or failed, saved locally.", error);
     return newEq;
   }
 }
 
 export async function deleteEquipment(id: string): Promise<void> {
-  try {
-    await deleteDoc(doc(db, "equipments", id));
-  } catch (error) {
-    console.warn("Firestore delete failed, using local mock.", error);
-  }
   mockEquipments = mockEquipments.filter(e => e.id !== id);
   setLocalStorage('lab_equipments', mockEquipments);
+
+  try {
+    await withTimeout(deleteDoc(doc(db, "equipments", id)), 3000);
+  } catch (error) {
+    console.warn("Firestore delete equipment failed, deleted locally.", error);
+  }
 }
 
 export async function updateEquipment(id: string, updates: Partial<Equipment>): Promise<void> {
-  try {
-    await updateDoc(doc(db, "equipments", id), updates);
-  } catch (error) {
-    console.warn("Firestore update failed, using local mock.", error);
-  }
-  mockEquipments = mockEquipments.map(e => e.id === id ? { ...e, ...updates } : e);
+  // 1. Immediately update in-memory and localStorage cache
+  mockEquipments = mockEquipments.map(e => {
+    if (e.id === id) {
+      const updated = { ...e, ...updates };
+      // Delete any explicitly undefined properties
+      for (const [k, v] of Object.entries(updates)) {
+        if (v === undefined) {
+          delete (updated as any)[k];
+        }
+      }
+      return updated;
+    }
+    return e;
+  });
   setLocalStorage('lab_equipments', mockEquipments);
+
+  // 2. Prepare clean Firestore updates: convert undefined fields to deleteField() so Firestore won't throw
+  const cleanUpdates: any = {};
+  for (const [key, value] of Object.entries(updates)) {
+    if (key === 'id') continue;
+    if (value === undefined) {
+      cleanUpdates[key] = deleteField();
+    } else {
+      cleanUpdates[key] = value;
+    }
+  }
+
+  try {
+    await withTimeout(updateDoc(doc(db, "equipments", id), cleanUpdates), 3000);
+  } catch (error) {
+    console.warn("Firestore updateEquipment timed out or failed, saved locally.", error);
+  }
 }
 
 
@@ -286,7 +324,7 @@ export async function fetchCheckItems(equipmentId?: string): Promise<CheckItem[]
     if (equipmentId) {
       q = query(collection(db, "check_items"), where("equipmentId", "==", equipmentId));
     }
-    const snapshot = await getDocs(q);
+    const snapshot = await withTimeout(getDocs(q), 3000);
     const list = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as CheckItem));
     if (list.length > 0) {
       if (equipmentId) {
@@ -300,63 +338,65 @@ export async function fetchCheckItems(equipmentId?: string): Promise<CheckItem[]
     }
     return equipmentId ? mockCheckItems.filter(i => i.equipmentId === equipmentId) : mockCheckItems;
   } catch (error) {
-    console.warn("Firestore access error, serving fallback data.", error);
+    console.warn("Firestore fetchCheckItems access error or timeout, serving fallback data.", error);
     return equipmentId ? mockCheckItems.filter(i => i.equipmentId === equipmentId) : mockCheckItems;
   }
 }
 
 export async function addCheckItem(item: Omit<CheckItem, 'id'>): Promise<CheckItem> {
   const cleanItem = cleanObject(item);
+  const mockId = Math.random().toString(36).substring(7);
+  const newItem = { ...item, id: mockId };
+  mockCheckItems.push(newItem);
+  setLocalStorage('lab_check_items', mockCheckItems);
+
   try {
-    const docRef = await addDoc(collection(db, "check_items"), cleanItem);
-    const newItem = { ...item, id: docRef.id };
-    mockCheckItems.push(newItem);
+    const docRef = await withTimeout(addDoc(collection(db, "check_items"), cleanItem), 3000);
+    newItem.id = docRef.id;
     setLocalStorage('lab_check_items', mockCheckItems);
     return newItem;
   } catch (error) {
-    console.warn("Firestore save failed, using local mock.", error);
-    const mockId = Math.random().toString(36).substring(7);
-    const newItem = { ...item, id: mockId };
-    mockCheckItems.push(newItem);
-    setLocalStorage('lab_check_items', mockCheckItems);
+    console.warn("Firestore addCheckItem timed out or failed, saved locally.", error);
     return newItem;
   }
 }
 
 export async function deleteCheckItem(id: string): Promise<void> {
-  try {
-    await deleteDoc(doc(db, "check_items", id));
-  } catch (error) {
-    console.warn("Firestore delete failed, using local mock.", error);
-  }
   mockCheckItems = mockCheckItems.filter(i => i.id !== id);
   setLocalStorage('lab_check_items', mockCheckItems);
+
+  try {
+    await withTimeout(deleteDoc(doc(db, "check_items", id)), 3000);
+  } catch (error) {
+    console.warn("Firestore deleteCheckItem failed, removed locally.", error);
+  }
 }
 
 export async function updateCheckItem(id: string, updates: Partial<CheckItem>): Promise<void> {
+  mockCheckItems = mockCheckItems.map(i => i.id === id ? { ...i, ...updates } : i);
+  setLocalStorage('lab_check_items', mockCheckItems);
+
   try {
     const docRef = doc(db, "check_items", id);
     const cleanUpdates: any = {};
     for (const [key, value] of Object.entries(updates)) {
-      if (key === 'id') continue; // Do not write the id field into doc data
+      if (key === 'id') continue;
       if (value === undefined) {
         cleanUpdates[key] = deleteField();
       } else {
         cleanUpdates[key] = value;
       }
     }
-    await updateDoc(docRef, cleanUpdates);
+    await withTimeout(updateDoc(docRef, cleanUpdates), 3000);
   } catch (error) {
-    console.warn("Firestore update failed, using local mock.", error);
+    console.warn("Firestore updateCheckItem failed, saved locally.", error);
   }
-  mockCheckItems = mockCheckItems.map(i => i.id === id ? { ...i, ...updates } : i);
-  setLocalStorage('lab_check_items', mockCheckItems);
 }
 
 export async function fetchOperators(): Promise<Operator[]> {
   try {
     const q = query(collection(db, "operators"));
-    const snapshot = await getDocs(q);
+    const snapshot = await withTimeout(getDocs(q), 3000);
     const list = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Operator));
     if (list.length > 0) {
       mockOperators = list;
@@ -365,58 +405,60 @@ export async function fetchOperators(): Promise<Operator[]> {
     }
     return mockOperators;
   } catch (error) {
-    console.warn("Firestore access error, serving fallback operators.", error);
+    console.warn("Firestore fetchOperators access error or timeout, serving fallback operators.", error);
     return mockOperators;
   }
 }
 
 export async function addOperator(op: Omit<Operator, 'id'>): Promise<Operator> {
+  const mockId = Math.random().toString(36).substring(7);
+  const newOp = { ...op, id: mockId };
+  mockOperators.push(newOp);
+  setLocalStorage('lab_operators', mockOperators);
+
   try {
-    const docRef = await addDoc(collection(db, "operators"), op);
-    const newOp = { ...op, id: docRef.id };
-    mockOperators.push(newOp);
+    const docRef = await withTimeout(addDoc(collection(db, "operators"), op), 3000);
+    newOp.id = docRef.id;
     setLocalStorage('lab_operators', mockOperators);
     return newOp;
   } catch (error) {
-    console.warn("Firestore save failed, using local mock.", error);
-    const mockId = Math.random().toString(36).substring(7);
-    const newOp = { ...op, id: mockId };
-    mockOperators.push(newOp);
-    setLocalStorage('lab_operators', mockOperators);
+    console.warn("Firestore addOperator timed out or failed, saved locally.", error);
     return newOp;
   }
 }
 
 export async function deleteOperator(id: string): Promise<void> {
-  try {
-    await deleteDoc(doc(db, "operators", id));
-  } catch (error) {
-    console.warn("Firestore delete failed, using local mock.", error);
-  }
   mockOperators = mockOperators.filter(o => o.id !== id);
   setLocalStorage('lab_operators', mockOperators);
+
+  try {
+    await withTimeout(deleteDoc(doc(db, "operators", id)), 3000);
+  } catch (error) {
+    console.warn("Firestore deleteOperator failed, removed locally.", error);
+  }
 }
 
 export async function updateOperator(id: string, updates: Partial<Operator>): Promise<void> {
-  try {
-    await updateDoc(doc(db, "operators", id), updates);
-  } catch (error) {
-    console.warn("Firestore update failed, using local mock.", error);
-  }
-  const m = mockOperators.find(o => o.id === id);
-  if (m) Object.assign(m, updates);
+  mockOperators = mockOperators.map(o => o.id === id ? { ...o, ...updates } : o);
   setLocalStorage('lab_operators', mockOperators);
+
+  try {
+    const cleanUpdates = cleanObject(updates);
+    await withTimeout(updateDoc(doc(db, "operators", id), cleanUpdates), 3000);
+  } catch (error) {
+    console.warn("Firestore updateOperator failed, saved locally.", error);
+  }
 }
 
 export async function fetchEquipmentLogs(equipmentId: string): Promise<CheckLog[]> {
   try {
     const q = query(collection(db, "logs"), where("equipmentId", "==", equipmentId));
-    const snapshot = await getDocs(q);
+    const snapshot = await withTimeout(getDocs(q), 3000);
     return snapshot.docs
       .map(doc => ({ id: doc.id, ...doc.data() } as CheckLog))
       .sort((a, b) => b.timestamp - a.timestamp);
   } catch (error) {
-    console.warn("Firestore access error, serving fallback data.", error);
+    console.warn("Firestore fetchEquipmentLogs access error or timeout, serving fallback data.", error);
     return mockLogs.filter(l => l.equipmentId === equipmentId).sort((a, b) => b.timestamp - a.timestamp);
   }
 }
@@ -424,7 +466,7 @@ export async function fetchEquipmentLogs(equipmentId: string): Promise<CheckLog[
 export async function fetchLogs(dateKey: string): Promise<CheckLog[]> {
   try {
     const q = query(collection(db, "logs"), where("dateKey", "==", dateKey));
-    const snapshot = await getDocs(q);
+    const snapshot = await withTimeout(getDocs(q), 3000);
     const list = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as CheckLog));
     if (list.length > 0) {
       // Merge unique logs
@@ -435,48 +477,55 @@ export async function fetchLogs(dateKey: string): Promise<CheckLog[]> {
     }
     return mockLogs.filter(l => l.dateKey === dateKey);
   } catch (error) {
-    console.warn("Firestore access error, serving fallback data.", error);
+    console.warn("Firestore fetchLogs access error or timeout, serving fallback data.", error);
     return mockLogs.filter(l => l.dateKey === dateKey);
   }
 }
 
 export async function saveCheckLog(log: Omit<CheckLog, 'id'>): Promise<string> {
   const cleanLog = cleanObject(log);
+  const mockId = 'log_' + Date.now() + '_' + Math.random().toString(36).substring(2, 7);
+  const newLog = { ...log, id: mockId };
+  
+  // 1. Instantly save in-memory & local storage so user data is NEVER lost or stuck
+  mockLogs.unshift(newLog);
+  setLocalStorage('lab_logs', mockLogs);
+
+  // 2. Persist to Firestore with 3-second timeout
   try {
-    const docRef = await addDoc(collection(db, "logs"), cleanLog);
-    const newLog = { ...log, id: docRef.id };
-    mockLogs.unshift(newLog);
+    const docRef = await withTimeout(addDoc(collection(db, "logs"), cleanLog), 3000);
+    newLog.id = docRef.id;
     setLocalStorage('lab_logs', mockLogs);
     return docRef.id;
   } catch (error) {
-    console.error("Failed to save log to Firestore, saving locally.", error);
-    const mockId = Math.random().toString(36).substring(7);
-    mockLogs.unshift({ ...log, id: mockId });
-    setLocalStorage('lab_logs', mockLogs);
+    console.warn("Firestore saveCheckLog timed out or failed, log saved locally in offline cache.", error);
     return mockId;
   }
 }
 
 export async function updateCheckLog(id: string, updates: Partial<CheckLog>): Promise<void> {
-  try {
-    await updateDoc(doc(db, "logs", id), updates);
-  } catch (error) {
-    console.warn("Firestore update failed, using local mock.", error);
-  }
   const m = mockLogs.find(l => l.id === id);
   if (m) Object.assign(m, updates);
   setLocalStorage('lab_logs', mockLogs);
+
+  try {
+    const cleanUpdates = cleanObject(updates);
+    await withTimeout(updateDoc(doc(db, "logs", id), cleanUpdates), 3000);
+  } catch (error) {
+    console.warn("Firestore updateCheckLog failed, saved locally.", error);
+  }
 }
 
 export async function deleteCheckLog(id: string): Promise<void> {
-  try {
-    await deleteDoc(doc(db, "logs", id));
-  } catch (error) {
-    console.warn("Firestore delete failed, using local mock.", error);
-  }
   const idx = mockLogs.findIndex(l => l.id === id);
   if (idx >= 0) mockLogs.splice(idx, 1);
   setLocalStorage('lab_logs', mockLogs);
+
+  try {
+    await withTimeout(deleteDoc(doc(db, "logs", id)), 3000);
+  } catch (error) {
+    console.warn("Firestore deleteCheckLog failed, removed locally.", error);
+  }
 }
 
 // Admin utility to seed basic data if DB is empty

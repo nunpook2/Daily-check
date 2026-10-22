@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
-import { fetchEquipments, fetchCheckItems, fetchLogs, saveCheckLog, fetchOperators, fetchTimeWindowSettings } from '../lib/db';
+import { fetchEquipments, fetchCheckItems, fetchLogs, saveCheckLog, fetchOperators, fetchTimeWindowSettings, updateEquipment } from '../lib/db';
 import { Equipment, CheckItem, CheckResponse, Operator, TimeWindowSettings, getEquipmentShiftScope, getCheckItemShiftScope, calculate33ShiftGroups } from '../types';
 import { format, differenceInCalendarDays } from 'date-fns';
 import { 
@@ -23,6 +23,7 @@ import {
   Smartphone,
   Check,
   X,
+  Wrench,
   FileSpreadsheet
 } from 'lucide-react';
 import { cn } from '../lib/utils';
@@ -39,6 +40,7 @@ export default function PerformCheck({ onSaved, initialEqCode, selectedDept = 'a
   // Scanner state
   const [scanCode, setScanCode] = useState('');
   const [scanError, setScanError] = useState('');
+  const [maintenanceEqToUnlock, setMaintenanceEqToUnlock] = useState<Equipment | null>(null);
   const [showCamera, setShowCamera] = useState(false);
 
   // Video and Canvas refs for native jsQR scanner
@@ -126,17 +128,11 @@ export default function PerformCheck({ onSaved, initialEqCode, selectedDept = 'a
        const eqToSelect = nonRetiredEq.find(e => e.id === initialEqCode || e.code.toLowerCase() === initialEqCode.toLowerCase());
        if (eqToSelect) {
          if (eqToSelect.status === 'maintenance') {
-           setScanError(`⛔ "${eqToSelect.name}" กำลังปิดปรับปรุง ไม่สามารถตรวจเช็กได้ในขณะนี้`);
+           setMaintenanceEqToUnlock(eqToSelect);
+           setScanError(`⛔ "${eqToSelect.name}" อยู่ในสถานะ [ปิดปรับปรุงซ่อมแซม] ชั่วคราว (สาเหตุ: ${eqToSelect.maintenanceReason || 'ชำรุดเสียหาย'})`);
            return;
          }
-         const itms = await fetchCheckItems(eqToSelect.id);
-         setItems(itms);
-         // Reset form
-         setResponses({});
-         setOperatorId('');
-         setShift('DAY');
-         setNotes('');
-         setSelectedEq(eqToSelect);
+         handleSelect(eqToSelect);
        }
     }
   };
@@ -285,25 +281,58 @@ export default function PerformCheck({ onSaved, initialEqCode, selectedDept = 'a
 
   const handleSelect = async (eq: Equipment) => {
     if (eq.status === 'maintenance') {
+      setMaintenanceEqToUnlock(eq);
       setScanError(`⛔ "${eq.name}" อยู่ในสถานะ [ปิดปรับปรุงซ่อมแซม] ชั่วคราว (สาเหตุ: ${eq.maintenanceReason || 'ชำรุดเสียหาย'}) ถูกบล็อกการสแกนจนกว่าทีมช่างจะซ่อมเสร็จ`);
       return;
     }
-    const itms = await fetchCheckItems(eq.id);
-    setItems(itms);
-    setSelectedEq(eq);
-    setResponses({});
-    setOperatorId('');
-    const eqScope = getEquipmentShiftScope(eq);
-    if (eqScope === 'NIGHT') {
-      setShift('NIGHT');
-    } else if (eqScope === 'DAY') {
-      setShift('DAY');
-    } else {
-      const curHour = new Date().getHours();
-      setShift((curHour >= 8 && curHour < 20) ? 'DAY' : 'NIGHT');
+    setMaintenanceEqToUnlock(null);
+    setScanError('');
+    try {
+      const itms = await fetchCheckItems(eq.id);
+      setItems(itms);
+      setSelectedEq(eq);
+      setResponses({});
+      setOperatorId('');
+      const eqScope = getEquipmentShiftScope(eq);
+      if (eqScope === 'NIGHT') {
+        setShift('NIGHT');
+      } else if (eqScope === 'DAY') {
+        setShift('DAY');
+      } else {
+        const curHour = new Date().getHours();
+        setShift((curHour >= 8 && curHour < 20) ? 'DAY' : 'NIGHT');
+      }
+      setNotes('');
+      setStandbyMode('active');
+    } catch (err) {
+      console.warn("fetchCheckItems failed", err);
     }
-    setNotes('');
-    setStandbyMode('active');
+  };
+
+  const handleUnlockRepairedEq = async (eq: Equipment) => {
+    const confirmUnlock = window.confirm(`คุณต้องการยืนยันว่าเครื่อง "${eq.name}" ได้รับการซ่อมแซมเสร็จสิ้นแล้ว และต้องการปลดล็อกกลับสู่สถานะ [พร้อมใช้งาน (Active)] เพื่อเริ่มสแกนตรวจทันทีหรือไม่?`);
+    if (!confirmUnlock) return;
+    
+    try {
+      setLoading(true);
+      await updateEquipment(eq.id, {
+        status: 'active',
+        maintenanceReason: '',
+        maintenanceNotes: '',
+        maintenanceAt: undefined,
+        maintenanceBy: undefined
+      });
+      setMaintenanceEqToUnlock(null);
+      setScanError('');
+      alert(`✅ ปลดล็อกเครื่อง "${eq.name}" สำเร็จ! เครื่องกลับสู่สถานะพร้อมใช้งานแล้ว`);
+      await loadEq();
+      const unlockedEq: Equipment = { ...eq, status: 'active', maintenanceReason: '', maintenanceNotes: '' };
+      await handleSelect(unlockedEq);
+    } catch (e) {
+      alert("❌ ไม่สามารถปลดล็อกเครื่องได้ กรุณาลองใหม่อีกครั้ง");
+    } finally {
+      setLoading(false);
+    }
   };
 
   const evalIsNormal = (item: CheckItem, value: any): boolean => {
@@ -369,13 +398,17 @@ export default function PerformCheck({ onSaved, initialEqCode, selectedDept = 'a
         isLate: false
       });
 
-      alert(`🎉 บันทึกสถานะ "ไม่ได้ใช้งาน / เครื่องติดทดสอบ" เรียบร้อยแล้ว ระบบลงบัญชีการเข้าตรวจจริงเรียบร้อย`);
-      setSaving(false);
+      alert(`🎉 บันทึกสถานะ "ไม่ได้ใช้งาน / เครื่องติดทดสอบ" ของ "${selectedEq.name}" เรียบร้อยแล้ว`);
       setSelectedEq(null);
-      await loadEq();
+      setResponses({});
+      setNotes('');
+      setStandbyMode('active');
       if (onSaved) onSaved();
+      loadEq().catch(console.error);
     } catch (err) {
+      console.error("Error setting standby log:", err);
       alert("❌ ไม่สามารถบันทึกสถานะได้ กรุณาลองใหม่อีกครั้ง");
+    } finally {
       setSaving(false);
     }
   };
@@ -497,13 +530,17 @@ export default function PerformCheck({ onSaved, initialEqCode, selectedDept = 'a
         isLate: isCheckLate
       });
 
-      setSaving(false);
+      alert(`🎉 บันทึกผลการตรวจสอบเครื่อง "${selectedEq.name}" (${selectedEq.code}) เรียบร้อยแล้ว!`);
       setSelectedEq(null);
-      await loadEq();
+      setResponses({});
+      setNotes('');
+      setStandbyMode('active');
       if (onSaved) onSaved();
+      loadEq().catch(console.error);
     } catch (error) {
       console.error("Error saving log:", error);
       alert("❌ ไม่สามารถบันทึกรายงานได้สำเร็จ กรุณาตรวจสอบข้อมูลการบันทึกของคุณและลองอีกครั้ง");
+    } finally {
       setSaving(false);
     }
   };
@@ -631,9 +668,27 @@ export default function PerformCheck({ onSaved, initialEqCode, selectedDept = 'a
                </form>
 
                {scanError && (
-                 <div className="mt-4 text-xs text-rose-700 font-bold bg-rose-50 border border-rose-100 px-4 py-3 rounded-xl flex items-center gap-2 w-full shadow-inner">
-                   <AlertCircle className="w-4 h-4 text-rose-500 shrink-0" />
-                   <span>{scanError}</span>
+                 <div className="mt-4 p-4 text-xs bg-rose-50 border border-rose-200 rounded-2xl space-y-3 w-full shadow-xs">
+                   <div className="flex items-start gap-2.5 text-rose-800 font-bold leading-relaxed">
+                     <AlertCircle className="w-5 h-5 text-rose-600 shrink-0 mt-0.5" />
+                     <span>{scanError}</span>
+                   </div>
+                   {maintenanceEqToUnlock && (
+                     <div className="pt-2.5 border-t border-rose-200/80 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 bg-white/70 p-3 rounded-xl border border-rose-100">
+                       <div>
+                         <p className="text-[11px] text-rose-900 font-black">เครื่องได้รับการซ่อมแซมเสร็จสิ้นแล้ว?</p>
+                         <p className="text-[10px] text-slate-500">สามารถกดปลดล็อกเพื่อเริ่มบันทึกตรวจเช็กได้ทันที</p>
+                       </div>
+                       <button
+                         type="button"
+                         onClick={() => handleUnlockRepairedEq(maintenanceEqToUnlock)}
+                         className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold rounded-xl text-xs cursor-pointer shadow-sm transition-all flex items-center justify-center gap-1.5 shrink-0 active:scale-95"
+                       >
+                         <Wrench className="w-3.5 h-3.5" />
+                         <span>ปลดล็อกเครื่องซ่อมเสร็จ</span>
+                       </button>
+                     </div>
+                   )}
                  </div>
                )}
              </div>
@@ -1094,21 +1149,40 @@ export default function PerformCheck({ onSaved, initialEqCode, selectedDept = 'a
                 </div>
 
                 {/* Submit Action Button */}
-                <div className="pt-2">
+                <div className="pt-2 flex flex-col sm:flex-row gap-3">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSaving(false);
+                      setSelectedEq(null);
+                      setResponses({});
+                      setNotes('');
+                      setStandbyMode('active');
+                    }}
+                    className="py-4 px-5 rounded-2xl font-bold tracking-wide text-slate-700 bg-white hover:bg-slate-100 border-2 border-slate-200 transition-all flex items-center justify-center gap-2 text-sm cursor-pointer shadow-sm active:scale-[0.99]"
+                  >
+                    <ArrowLeft className="w-4 h-4" />
+                    ยกเลิก / เปลี่ยนเครื่อง
+                  </button>
                   <button 
                     type="submit" 
                     disabled={saving}
                     className={cn(
-                      "w-full py-4.5 rounded-2xl font-bold tracking-wide text-white transition-all flex items-center justify-center gap-2 text-sm cursor-pointer shadow-lg",
+                      "flex-1 py-4.5 rounded-2xl font-bold tracking-wide text-white transition-all flex items-center justify-center gap-2 text-sm cursor-pointer shadow-lg",
                       saving 
                         ? "bg-slate-400 cursor-not-allowed" 
                         : standbyMode === 'testing'
                           ? "bg-amber-500 hover:bg-amber-600 shadow-amber-500/10 active:scale-[0.99]"
-                          : "bg-indigo-600 hover:bg-indigo-700 shadow-indigo-600/10 active:scale-[0.99]"
+                          : standbyMode === 'unused'
+                            ? "bg-slate-700 hover:bg-slate-800 shadow-slate-700/10 active:scale-[0.99]"
+                            : "bg-indigo-600 hover:bg-indigo-700 shadow-indigo-600/10 active:scale-[0.99]"
                     )}
                   >
                     {saving ? (
-                      "กำลังส่งข้อมูลบันทึก..."
+                      <span className="flex items-center gap-2">
+                        <RefreshCcw className="w-4 h-4 animate-spin" />
+                        กำลังส่งข้อมูลบันทึก...
+                      </span>
                     ) : (
                       <>
                         <CheckCircle className="w-5 h-5" />

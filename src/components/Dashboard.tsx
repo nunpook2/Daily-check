@@ -560,20 +560,35 @@ export default function Dashboard({
   const handleCompleteMaintenance = async () => {
     if (!historyEq) return;
 
-    const updates: Partial<Equipment> = {
-      status: 'active',
-      maintenanceReason: '',
-      maintenanceNotes: '',
-      maintenanceAt: undefined,
-      maintenanceBy: undefined
-    };
+    try {
+      const updates: Partial<Equipment> = {
+        status: 'active',
+        maintenanceReason: '',
+        maintenanceNotes: '',
+        maintenanceAt: undefined,
+        maintenanceBy: undefined
+      };
 
-    await updateEquipment(historyEq.id, updates);
+      await updateEquipment(historyEq.id, updates);
 
-    // Update local equipments list
-    const updatedEq = { ...historyEq, ...updates };
-    setEquipments(prev => prev.map(e => e.id === historyEq.id ? updatedEq : e));
-    setHistoryEq(updatedEq);
+      // Update local equipments list
+      const updatedEq: Equipment = { 
+        ...historyEq, 
+        status: 'active',
+        maintenanceReason: '',
+        maintenanceNotes: '',
+        maintenanceAt: undefined,
+        maintenanceBy: undefined
+      };
+      setEquipments(prev => prev.map(e => e.id === historyEq.id ? updatedEq : e));
+      setHistoryEq(updatedEq);
+      setShowMaintForm(false);
+      alert(`✅ ปลดล็อกเครื่อง "${historyEq.name}" เรียบร้อยแล้ว! สถานะเปลี่ยนเป็น [พร้อมใช้งาน (Active)] สามารถเริ่มสแกนตรวจเช็กได้ทันที`);
+      await loadData(dashboardDate);
+    } catch (err) {
+      console.error("Error unlocking maintenance equipment:", err);
+      alert("❌ เกิดข้อผิดพลาดในการปลดล็อกเครื่อง กรุณาลองใหม่อีกครั้ง");
+    }
   };
 
   const handleQuickSetStandby = async (e: React.MouseEvent, eqId: string, shift: 'DAY' | 'NIGHT') => {
