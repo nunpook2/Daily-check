@@ -9,7 +9,8 @@ import {
   updateEquipment,
   saveCheckLog,
   fetchOperators,
-  fetchTimeWindowSettings
+  fetchTimeWindowSettings,
+  fetchTimeWindowSettingsAsync
 } from '../lib/db';
 import { format } from 'date-fns';
 import { 
@@ -44,7 +45,7 @@ const getShiftLeaderForDate = (dateStr: string, shift: 'DAY' | 'NIGHT', operator
   const { dayGroup, nightGroup } = calculate33ShiftGroups(dateStr);
   const currentGroup = shift === 'DAY' ? dayGroup : nightGroup;
   
-  // 1. Look for active shift leader assigned to this group in Settings
+  // Look for active shift leader assigned to this group in Settings
   const leader = operatorsList.find(o => 
     o.isActive && 
     (!o.classification || o.classification === 'employee') && 
@@ -53,15 +54,7 @@ const getShiftLeaderForDate = (dateStr: string, shift: 'DAY' | 'NIGHT', operator
   );
   if (leader) return leader.name;
 
-  // 2. Fallback to any active operator in this group from Settings
-  const member = operatorsList.find(o => 
-    o.isActive && 
-    (!o.classification || o.classification === 'employee') && 
-    o.shiftGroup === currentGroup
-  );
-  if (member) return member.name;
-
-  // 3. If no operator configured in Settings for this group, show group label (never a fake name)
+  // If no shift leader configured in Settings for this group, show group label (never fallback to regular operator)
   return `ยังไม่กำหนด (กะ ${currentGroup})`;
 };
 
@@ -91,13 +84,6 @@ const getShiftLeaderForToday = (shift: 'DAY' | 'NIGHT', operatorsList: Operator[
     o.shiftGroup === currentGroup
   );
   if (leader) return leader.name;
-
-  const member = operatorsList.find(o => 
-    o.isActive && 
-    (!o.classification || o.classification === 'employee') && 
-    o.shiftGroup === currentGroup
-  );
-  if (member) return member.name;
 
   return `ยังไม่กำหนด (กะ ${currentGroup})`;
 };
@@ -586,13 +572,24 @@ export default function Dashboard({
     loadData(dashboardDate);
   }, [dashboardDate, selectedDept]);
 
+  useEffect(() => {
+    const handleTwUpdate = (e: any) => {
+      if (e.detail) {
+        setTimeSettings(e.detail);
+      }
+    };
+    window.addEventListener('time_window_settings_updated', handleTwUpdate);
+    return () => window.removeEventListener('time_window_settings_updated', handleTwUpdate);
+  }, []);
+
   const loadData = async (dateStr: string) => {
     setLoading(true);
-    let [eqData, dateLogsData, itemsData, opData] = await Promise.all([
+    let [eqData, dateLogsData, itemsData, opData, settings] = await Promise.all([
       fetchEquipments(),
       fetchLogs(dateStr),
       fetchCheckItems(),
-      fetchOperators()
+      fetchOperators(),
+      fetchTimeWindowSettingsAsync()
     ]);
 
     // Filter equipments by selectedDept if not 'all'
@@ -646,8 +643,7 @@ export default function Dashboard({
     setCheckItems(itemsData);
     setLogs(dateLogsData);
     setOperators(opData);
-    const settings = fetchTimeWindowSettings();
-    setTimeSettings(settings);
+    setTimeSettings(settings || fetchTimeWindowSettings());
     setLoading(false);
   };
 

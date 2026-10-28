@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
-import { fetchEquipments, fetchCheckItems, fetchLogs, saveCheckLog, fetchOperators, fetchTimeWindowSettings, updateEquipment } from '../lib/db';
-import { Equipment, CheckItem, CheckResponse, Operator, TimeWindowSettings, getEquipmentShiftScope, getCheckItemShiftScope, calculate33ShiftGroups } from '../types';
+import { fetchEquipments, fetchCheckItems, fetchLogs, saveCheckLog, fetchOperators, fetchTimeWindowSettings, fetchTimeWindowSettingsAsync, updateEquipment } from '../lib/db';
+import { Equipment, CheckItem, CheckResponse, CheckLog, Operator, TimeWindowSettings, getEquipmentShiftScope, getCheckItemShiftScope, calculate33ShiftGroups } from '../types';
 import { format, differenceInCalendarDays } from 'date-fns';
+import { getEquipmentsStatusForDate } from './Dashboard';
 import { 
   ChevronRight, 
   ArrowLeft, 
@@ -24,7 +25,14 @@ import {
   Check,
   X,
   Wrench,
-  FileSpreadsheet
+  FileSpreadsheet,
+  ListChecks,
+  Clock,
+  Zap,
+  MapPin,
+  RefreshCw,
+  SlidersHorizontal,
+  Filter
 } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { motion, AnimatePresence } from 'motion/react';
@@ -33,10 +41,18 @@ import jsQR from "jsqr";
 export default function PerformCheck({ onSaved, initialEqCode, selectedDept = 'all' }: { onSaved?: () => void, initialEqCode?: string, selectedDept?: string }) {
   const [equipments, setEquipments] = useState<Equipment[]>([]);
   const [operators, setOperators] = useState<Operator[]>([]);
+  const [todayLogs, setTodayLogs] = useState<CheckLog[]>([]);
   const [todaysLogs, setTodaysLogs] = useState<Set<string>>(new Set());
   const [selectedEq, setSelectedEq] = useState<Equipment | null>(null);
   const [loading, setLoading] = useState(true);
   
+  // Mobile Hub View & Filters
+  const [hubTab, setHubTab] = useState<'checklist' | 'scan'>('checklist');
+  const [checklistFilter, setChecklistFilter] = useState<'pending' | 'completed' | 'exempt' | 'all'>('pending');
+  const [searchFilter, setSearchFilter] = useState('');
+  const [lastSavedMessage, setLastSavedMessage] = useState<string | null>(null);
+  const [formError, setFormError] = useState<string | null>(null);
+
   // Scanner state
   const [scanCode, setScanCode] = useState('');
   const [scanError, setScanError] = useState('');
@@ -52,7 +68,10 @@ export default function PerformCheck({ onSaved, initialEqCode, selectedDept = 'a
   const [items, setItems] = useState<CheckItem[]>([]);
   const [responses, setResponses] = useState<Record<string, any>>({});
   const [operatorId, setOperatorId] = useState('');
-  const [shift, setShift] = useState<'DAY' | 'NIGHT'>('DAY');
+  const [shift, setShift] = useState<'DAY' | 'NIGHT'>(() => {
+    const hr = new Date().getHours();
+    return (hr >= 8 && hr < 20) ? 'DAY' : 'NIGHT';
+  });
   const [checkType, setCheckType] = useState<string>('all');
   const [notes, setNotes] = useState('');
   const [saving, setSaving] = useState(false);
@@ -83,6 +102,36 @@ export default function PerformCheck({ onSaved, initialEqCode, selectedDept = 'a
     return items.some(item => item.frequency === 'on-use');
   }, [items]);
 
+  const shiftEquipmentsStatus = useMemo(() => {
+    const todayStr = format(new Date(), 'yyyy-MM-dd');
+    const { requiredEqs, exemptEqs } = getEquipmentsStatusForDate(todayStr, shift, equipments, todayLogs);
+    const shiftLogs = todayLogs.filter(l => l.shift === shift);
+
+    const checkedList: { eq: Equipment; log: CheckLog }[] = [];
+    const pendingList: Equipment[] = [];
+
+    requiredEqs.forEach(eq => {
+      const log = shiftLogs.find(l => 
+        l.equipmentId === eq.id || 
+        l.equipmentId === eq.code || 
+        (l.equipmentCode && l.equipmentCode === eq.code)
+      );
+      if (log) {
+        checkedList.push({ eq, log });
+      } else {
+        pendingList.push(eq);
+      }
+    });
+
+    return {
+      requiredEqs,
+      exemptEqs,
+      checkedList,
+      pendingList,
+      progressPercent: requiredEqs.length > 0 ? Math.round((checkedList.length / requiredEqs.length) * 100) : 0
+    };
+  }, [equipments, todayLogs, shift]);
+
   useEffect(() => {
     loadEq();
   }, [selectedDept]);
@@ -93,7 +142,8 @@ export default function PerformCheck({ onSaved, initialEqCode, selectedDept = 'a
     let [eqData, logsData, opData] = await Promise.all([
       fetchEquipments(),
       fetchLogs(today),
-      fetchOperators()
+      fetchOperators(),
+      fetchTimeWindowSettingsAsync()
     ]);
 
     // Filter equipments by selectedDept if not 'all'
@@ -120,6 +170,7 @@ export default function PerformCheck({ onSaved, initialEqCode, selectedDept = 'a
 
     const nonRetiredEq = eqData.filter(e => e.status !== 'retired');
     setEquipments(nonRetiredEq);
+    setTodayLogs(logsData);
     setTodaysLogs(new Set(logsData.map(l => l.equipmentId)));
     setOperators(opData.filter(o => o.isActive));
     setLoading(false);
@@ -340,7 +391,7 @@ export default function PerformCheck({ onSaved, initialEqCode, selectedDept = 'a
       await updateEquipment(eq.id, updates);
       setMaintenanceEqToUnlock(null);
       setScanError('');
-      alert(`✅ ปลดล็อกเครื่อง "${eq.name}" สำเร็จ! เครื่องกลับสู่สถานะพร้อมใช้งานแล้ว`);
+      setLastSavedMessage(`✅ ปลดล็อกเครื่อง "${eq.name}" สำเร็จ! เครื่องกลับสู่สถานะพร้อมใช้งานแล้ว`);
       await loadEq();
       const unlockedEq: Equipment = { 
         ...eq, 
@@ -348,7 +399,7 @@ export default function PerformCheck({ onSaved, initialEqCode, selectedDept = 'a
       };
       await handleSelect(unlockedEq);
     } catch (e) {
-      alert("❌ ไม่สามารถปลดล็อกเครื่องได้ กรุณาลองใหม่อีกครั้ง");
+      setFormError("❌ ไม่สามารถปลดล็อกเครื่องได้ กรุณาลองใหม่อีกครั้ง");
     } finally {
       setLoading(false);
     }
@@ -372,7 +423,7 @@ export default function PerformCheck({ onSaved, initialEqCode, selectedDept = 'a
   const handleSetStandbyFromCheck = async () => {
     if (!selectedEq) return;
     if (!operatorId) {
-      alert("⚠️ กรุณาเลือกชื่อพนักงานผู้รับผิดชอบตรวจเช็กในโซนที่ 1 ก่อน");
+      setFormError("⚠️ กรุณาเลือกชื่อพนักงานผู้รับผิดชอบตรวจเช็กในโซนที่ 1 ก่อน");
       return;
     }
 
@@ -380,6 +431,7 @@ export default function PerformCheck({ onSaved, initialEqCode, selectedDept = 'a
     if (!confirmSet) return;
 
     setSaving(true);
+    setFormError(null);
 
     const op = operators.find(o => o.employeeId === operatorId);
     const opName = op ? op.name : operatorId;
@@ -419,16 +471,17 @@ export default function PerformCheck({ onSaved, initialEqCode, selectedDept = 'a
         isLate: false
       });
 
-      alert(`🎉 บันทึกสถานะ "ไม่ได้ใช้งาน / เครื่องติดทดสอบ" ของ "${selectedEq.name}" เรียบร้อยแล้ว`);
+      setLastSavedMessage(`🎉 บันทึกสถานะ "ไม่ได้ใช้งาน / เครื่องติดทดสอบ" ของ "${selectedEq.name}" เรียบร้อยแล้ว`);
       setSelectedEq(null);
       setResponses({});
       setNotes('');
+      setFormError(null);
       setStandbyMode('active');
       if (onSaved) onSaved();
       loadEq().catch(console.error);
     } catch (err) {
       console.error("Error setting standby log:", err);
-      alert("❌ ไม่สามารถบันทึกสถานะได้ กรุณาลองใหม่อีกครั้ง");
+      setFormError("❌ ไม่สามารถบันทึกสถานะได้ กรุณาลองใหม่อีกครั้ง");
     } finally {
       setSaving(false);
     }
@@ -437,11 +490,12 @@ export default function PerformCheck({ onSaved, initialEqCode, selectedDept = 'a
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedEq || !operatorId) {
-      alert("⚠️ กรุณาเลือกพนักงานผู้รับผิดชอบตรวจเช็กในโซนที่ 1 ก่อน");
+      setFormError("⚠️ กรุณาเลือกพนักงานผู้รับผิดชอบตรวจเช็กในโซนที่ 1 ก่อน");
       return;
     }
 
     setSaving(true);
+    setFormError(null);
     try {
       const op = operators.find(o => o.employeeId === operatorId);
       const opName = op ? op.name : operatorId;
@@ -449,7 +503,7 @@ export default function PerformCheck({ onSaved, initialEqCode, selectedDept = 'a
       // Validate that all required items are answered
       const unansweredItem = filteredItems.find(item => item.isRequired && (responses[item.id!] === undefined || responses[item.id!] === ''));
       if (unansweredItem) {
-        alert(`⚠️ กรุณาทำรายการตรวจหรือระบุค่าสำหรับข้อ: "${unansweredItem.name}" ก่อนส่งบันทึก`);
+        setFormError(`⚠️ กรุณาทำรายการตรวจหรือระบุค่าสำหรับข้อ: "${unansweredItem.name}" ก่อนส่งบันทึก`);
         setSaving(false);
         return;
       }
@@ -553,16 +607,17 @@ export default function PerformCheck({ onSaved, initialEqCode, selectedDept = 'a
         isLate: isCheckLate
       });
 
-      alert(`🎉 บันทึกผลการตรวจสอบเครื่อง "${selectedEq.name}" (${selectedEq.code}) เรียบร้อยแล้ว!`);
+      setLastSavedMessage(`🎉 บันทึกผลการตรวจสอบเครื่อง "${selectedEq.name}" (${selectedEq.code}) เรียบร้อยแล้ว!`);
       setSelectedEq(null);
       setResponses({});
       setNotes('');
+      setFormError(null);
       setStandbyMode('active');
       if (onSaved) onSaved();
       loadEq().catch(console.error);
     } catch (error) {
       console.error("Error saving log:", error);
-      alert("❌ ไม่สามารถบันทึกรายงานได้สำเร็จ กรุณาตรวจสอบข้อมูลการบันทึกของคุณและลองอีกครั้ง");
+      setFormError("❌ ไม่สามารถบันทึกรายงานได้สำเร็จ กรุณาตรวจสอบข้อมูลการบันทึกของคุณและลองอีกครั้ง");
     } finally {
       setSaving(false);
     }
@@ -592,136 +647,690 @@ export default function PerformCheck({ onSaved, initialEqCode, selectedDept = 'a
 
   return (
     <div className="max-w-xl mx-auto space-y-6">
-      <AnimatePresence mode="wait">
+       <AnimatePresence mode="wait">
         {!selectedEq ? (
-          /* SCANNING HUB STATE */
+          /* MOBILE INSPECTION HUB & SCANNER */
           <motion.div 
-            key="list"
+            key="hub"
             initial={{ opacity: 0, y: 15 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -15 }}
-            className="space-y-6"
+            className="space-y-4 sm:space-y-5"
           >
-             <div className="text-center">
-               <span className="inline-flex items-center gap-1.5 px-3 py-1 bg-indigo-50 border border-indigo-100 text-indigo-700 text-xs font-bold rounded-full mb-2">
-                 <Smartphone className="w-3.5 h-3.5" />
-                 ระบบสแกนผ่านมือถือรุ่นอัจฉริยะ (Smart Terminal)
-               </span>
-               <h2 className="text-2xl sm:text-3xl font-black text-slate-900 tracking-tight leading-tight">หน้าลงบันทึกของผู้ตรวจเช็ก</h2>
-               <p className="text-slate-500 text-xs sm:text-sm mt-1 max-w-sm mx-auto font-medium">
-                 สแกนแท็ก QR Code หน้าเครื่องจักร เพื่อเริ่มต้นบันทึกและส่งรายงานผลการตรวจสอบ
-               </p>
-             </div>
-            
-             {/* Scan Interface Box */}
-             <div className="bg-white border border-slate-200/80 rounded-[2.5rem] shadow-xl overflow-hidden flex flex-col items-center p-6 sm:p-10 relative group">
-               <div className="absolute top-0 right-0 w-48 h-48 bg-indigo-500/5 rounded-full blur-3xl -translate-y-1/2 translate-x-1/2 pointer-events-none"></div>
-               
-               <div className="w-16 h-16 bg-gradient-to-br from-indigo-50 to-indigo-100 rounded-2xl flex items-center justify-center mb-5 shadow-inner border border-indigo-100/50">
-                  <ScanLine className="w-8 h-8 text-indigo-600 animate-pulse" />
-               </div>
-               
-               {showCamera ? (
-                 <div className="w-full aspect-square max-w-[280px] bg-slate-950 rounded-[2rem] overflow-hidden shadow-2xl mb-6 relative border-4 border-slate-100 ring-1 ring-slate-200/50">
-                    <video ref={videoRef} className="w-full h-full object-cover" />
-                    <canvas ref={canvasRef} className="hidden" />
-                    
-                    {/* Glowing Scan Bar */}
-                    <div className="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-transparent via-indigo-400 to-transparent animate-bounce shadow-[0_0_15px_rgba(79,70,229,0.8)]"></div>
-                    
-                    {/* QR corner reticles */}
-                    <div className="absolute top-4 left-4 w-8 h-8 border-t-4 border-l-4 border-indigo-400 rounded-tl-lg"></div>
-                    <div className="absolute top-4 right-4 w-8 h-8 border-t-4 border-r-4 border-indigo-400 rounded-tr-lg"></div>
-                    <div className="absolute bottom-4 left-4 w-8 h-8 border-b-4 border-l-4 border-indigo-400 rounded-bl-lg"></div>
-                    <div className="absolute bottom-4 right-4 w-8 h-8 border-b-4 border-r-4 border-indigo-400 rounded-br-lg"></div>
-
-                    <button 
-                      type="button"
-                      onClick={() => setShowCamera(false)} 
-                      className="absolute bottom-4 left-1/2 transform -translate-x-1/2 px-4 py-1.5 bg-rose-600 text-white font-bold rounded-xl shadow-lg text-[10px] hover:bg-rose-500 cursor-pointer"
-                    >
-                      ปิดกล้องสแกน
-                    </button>
+             {/* In-App Toast / Success Message */}
+             {lastSavedMessage && (
+               <motion.div 
+                 initial={{ opacity: 0, scale: 0.95 }}
+                 animate={{ opacity: 1, scale: 1 }}
+                 className="p-4 bg-emerald-600 text-white rounded-2xl shadow-lg flex items-center justify-between gap-3 text-xs sm:text-sm font-black"
+               >
+                 <div className="flex items-center gap-2.5">
+                   <CheckCircle className="w-5 h-5 shrink-0 text-emerald-200" />
+                   <span>{lastSavedMessage}</span>
                  </div>
-               ) : (
-                 <div className="w-full max-w-[280px] space-y-3 mb-6">
-                    <button 
-                      type="button"
-                      onClick={() => { setShowCamera(true); setScanError(''); }}
-                      className="w-full py-4 px-6 bg-gradient-to-r from-indigo-600 to-indigo-700 hover:from-indigo-500 hover:to-indigo-600 text-white font-bold rounded-2xl transition-all shadow-lg flex items-center justify-center gap-2.5 cursor-pointer relative overflow-hidden active:scale-95"
-                    >
-                      <Camera className="w-5 h-5 shrink-0" />
-                      <span className="text-sm tracking-wide">สแกนรหัสผ่านกล้องถ่ายรูป</span>
-                    </button>
-
-                    <button 
-                      type="button"
-                      onClick={() => fileInputRef.current?.click()}
-                      className="w-full py-3 px-6 bg-slate-50 hover:bg-slate-100 text-slate-700 font-bold border border-slate-200/80 rounded-2xl transition-all flex items-center justify-center gap-2 text-xs cursor-pointer"
-                    >
-                      <Upload className="w-4 h-4 text-slate-500" />
-                      <span>อัปโหลดภาพถ่ายคิวอาร์ (QR)</span>
-                    </button>
-                    <input 
-                      ref={fileInputRef} 
-                      type="file" 
-                      accept="image/*" 
-                      capture="environment" 
-                      onChange={handleFileUpload} 
-                      className="hidden" 
-                    />
-                 </div>
-               )}
-
-               {/* Manual entry override */}
-               <form onSubmit={handleManualSubmit} className="w-full pt-4 border-t border-slate-100 flex gap-2">
-                 <input 
-                   type="text"
-                   value={scanCode}
-                   onChange={e => setScanCode(e.target.value)}
-                   placeholder="กรอกรหัสเครื่องจักรด้วยตัวเอง (เช่น MI-035)"
-                   className="flex-1 px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500/20 text-xs font-semibold placeholder:text-slate-400"
-                 />
                  <button 
-                   type="submit"
-                   className="px-4 py-2.5 bg-slate-900 text-white rounded-xl font-bold text-xs hover:bg-slate-800 transition-colors cursor-pointer shrink-0"
+                   type="button" 
+                   onClick={() => setLastSavedMessage(null)}
+                   className="p-1 hover:bg-emerald-700 rounded-lg text-emerald-100 transition-colors cursor-pointer"
                  >
-                   ตรวจสอบรหัส
+                   <X className="w-4 h-4" />
                  </button>
-               </form>
+               </motion.div>
+             )}
 
-               {scanError && (
-                 <div className="mt-4 p-4 text-xs bg-rose-50 border border-rose-200 rounded-2xl space-y-3 w-full shadow-xs">
-                   <div className="flex items-start gap-2.5 text-rose-800 font-bold leading-relaxed">
-                     <AlertCircle className="w-5 h-5 text-rose-600 shrink-0 mt-0.5" />
-                     <span>{scanError}</span>
+             {/* In-App Error Banner */}
+             {formError && (
+               <div className="p-4 bg-rose-50 border border-rose-200 text-rose-800 text-xs font-bold rounded-2xl flex items-center justify-between gap-2">
+                 <span>{formError}</span>
+                 <button type="button" onClick={() => setFormError(null)} className="text-rose-500 hover:text-rose-700">
+                   <X className="w-4 h-4" />
+                 </button>
+               </div>
+             )}
+
+             {/* Interactive Shift Overview Widget */}
+             <div className="bg-white rounded-3xl border border-slate-200/80 shadow-md p-4 sm:p-5 space-y-4 relative overflow-hidden">
+               <div className="absolute top-0 right-0 w-40 h-40 bg-indigo-50/50 rounded-full blur-3xl pointer-events-none"></div>
+
+               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 relative z-10">
+                 <div>
+                   <div className="flex items-center gap-2">
+                     <span className={cn(
+                       "px-2.5 py-1 rounded-full text-[11px] font-black flex items-center gap-1.5 shadow-2xs",
+                       shift === 'DAY' ? "bg-amber-50 text-amber-800 border border-amber-200" : "bg-indigo-50 text-indigo-800 border border-indigo-200"
+                     )}>
+                       {shift === 'DAY' ? <Sun className="w-3.5 h-3.5 text-amber-600" /> : <Moon className="w-3.5 h-3.5 text-indigo-600" />}
+                       {shift === 'DAY' ? 'กะกลางวัน (08:00 - 20:00)' : 'กะกลางคืน (20:00 - 08:00)'}
+                     </span>
+                     <span className="text-[11px] font-mono font-bold text-slate-400">
+                       {format(new Date(), 'dd/MM/yyyy')}
+                     </span>
                    </div>
-                   {maintenanceEqToUnlock && (
-                     <div className="pt-2.5 border-t border-rose-200/80 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 bg-white/70 p-3 rounded-xl border border-rose-100">
-                       <div>
-                         <p className="text-[11px] text-rose-900 font-black">เครื่องได้รับการซ่อมแซมเสร็จสิ้นแล้ว?</p>
-                         <p className="text-[10px] text-slate-500">สามารถกดปลดล็อกเพื่อเริ่มบันทึกตรวจเช็กได้ทันที</p>
-                       </div>
+                   <h2 className="text-lg sm:text-xl font-black text-slate-900 mt-1 tracking-tight">
+                     สถานะการตรวจเช็กประจำกะ
+                   </h2>
+                 </div>
+
+                 {/* Quick Shift Switcher */}
+                 <div className="flex items-center bg-slate-100 p-1 rounded-xl shrink-0 self-start sm:self-auto border border-slate-200/60">
+                   <button
+                     type="button"
+                     onClick={() => setShift('DAY')}
+                     className={cn(
+                       "px-3 py-1.5 rounded-lg text-xs font-black transition-all flex items-center gap-1.5 cursor-pointer",
+                       shift === 'DAY' ? "bg-white text-amber-700 shadow-xs" : "text-slate-500 hover:text-slate-800"
+                     )}
+                   >
+                     <Sun className="w-3.5 h-3.5 text-amber-500" />
+                     <span>กะเช้า</span>
+                   </button>
+                   <button
+                     type="button"
+                     onClick={() => setShift('NIGHT')}
+                     className={cn(
+                       "px-3 py-1.5 rounded-lg text-xs font-black transition-all flex items-center gap-1.5 cursor-pointer",
+                       shift === 'NIGHT' ? "bg-white text-indigo-700 shadow-xs" : "text-slate-500 hover:text-slate-800"
+                     )}
+                   >
+                     <Moon className="w-3.5 h-3.5 text-indigo-500" />
+                     <span>กะดึก</span>
+                   </button>
+                 </div>
+               </div>
+
+               {/* Progress bar */}
+               <div className="relative z-10">
+                 <div className="flex justify-between text-xs font-black text-slate-700 mb-1.5">
+                   <span className="flex items-center gap-1.5">
+                     <span>ความคืบหน้ารวม</span>
+                     {shiftEquipmentsStatus.pendingList.length === 0 && shiftEquipmentsStatus.requiredEqs.length > 0 && (
+                       <span className="text-emerald-600 font-extrabold flex items-center gap-1">
+                         <Sparkles className="w-3 h-3 text-emerald-500" /> ตรวจครบ 100% แล้ว!
+                       </span>
+                     )}
+                   </span>
+                   <span className="font-mono text-indigo-600 font-black">
+                     {shiftEquipmentsStatus.checkedList.length} / {shiftEquipmentsStatus.requiredEqs.length} เครื่อง ({shiftEquipmentsStatus.progressPercent}%)
+                   </span>
+                 </div>
+                 <div className="w-full bg-slate-100 h-2.5 rounded-full overflow-hidden p-0.5 border border-slate-200/60">
+                   <div 
+                     className={cn(
+                       "h-full rounded-full transition-all duration-500",
+                       shiftEquipmentsStatus.pendingList.length === 0 
+                         ? "bg-emerald-500" 
+                         : "bg-gradient-to-r from-indigo-500 to-indigo-600"
+                     )}
+                     style={{ width: `${Math.min(100, shiftEquipmentsStatus.progressPercent)}%` }}
+                   />
+                 </div>
+               </div>
+
+               {/* Three Interactive Metric Filter Cards */}
+               <div className="grid grid-cols-3 gap-2 pt-1 relative z-10">
+                 <button
+                   type="button"
+                   onClick={() => { setHubTab('checklist'); setChecklistFilter('pending'); }}
+                   className={cn(
+                     "p-2.5 sm:p-3 rounded-2xl border text-left transition-all cursor-pointer",
+                     checklistFilter === 'pending' && hubTab === 'checklist' 
+                       ? "bg-rose-50 border-rose-300 ring-2 ring-rose-400/20 shadow-xs" 
+                       : "bg-slate-50 border-slate-200 hover:bg-rose-50/50 hover:border-rose-200"
+                   )}
+                 >
+                   <div className="flex items-center gap-1.5 text-rose-600 font-black text-[10px] uppercase">
+                     <span className="w-2 h-2 rounded-full bg-rose-500 animate-pulse"></span>
+                     ค้างตรวจ
+                   </div>
+                   <p className="text-lg sm:text-xl font-black text-slate-900 mt-1 font-mono">
+                     {shiftEquipmentsStatus.pendingList.length}
+                   </p>
+                   <p className="text-[10px] text-slate-500 truncate font-semibold">ต้องรีบดำเนินการ</p>
+                 </button>
+
+                 <button
+                   type="button"
+                   onClick={() => { setHubTab('checklist'); setChecklistFilter('completed'); }}
+                   className={cn(
+                     "p-2.5 sm:p-3 rounded-2xl border text-left transition-all cursor-pointer",
+                     checklistFilter === 'completed' && hubTab === 'checklist' 
+                       ? "bg-emerald-50 border-emerald-300 ring-2 ring-emerald-400/20 shadow-xs" 
+                       : "bg-slate-50 border-slate-200 hover:bg-emerald-50/50 hover:border-emerald-200"
+                   )}
+                 >
+                   <div className="flex items-center gap-1.5 text-emerald-600 font-black text-[10px] uppercase">
+                     <CheckCircle className="w-3 h-3 text-emerald-500" />
+                     ตรวจแล้ว
+                   </div>
+                   <p className="text-lg sm:text-xl font-black text-slate-900 mt-1 font-mono">
+                     {shiftEquipmentsStatus.checkedList.length}
+                   </p>
+                   <p className="text-[10px] text-slate-500 truncate font-semibold">ผ่านการบันทึก</p>
+                 </button>
+
+                 <button
+                   type="button"
+                   onClick={() => { setHubTab('checklist'); setChecklistFilter('exempt'); }}
+                   className={cn(
+                     "p-2.5 sm:p-3 rounded-2xl border text-left transition-all cursor-pointer",
+                     checklistFilter === 'exempt' && hubTab === 'checklist' 
+                       ? "bg-amber-50 border-amber-300 ring-2 ring-amber-400/20 shadow-xs" 
+                       : "bg-slate-50 border-slate-200 hover:bg-amber-50/50 hover:border-amber-200"
+                   )}
+                 >
+                   <div className="flex items-center gap-1.5 text-amber-600 font-black text-[10px] uppercase">
+                     <Wrench className="w-3 h-3 text-amber-500" />
+                     ปิดซ่อม
+                   </div>
+                   <p className="text-lg sm:text-xl font-black text-slate-900 mt-1 font-mono">
+                     {shiftEquipmentsStatus.exemptEqs.length}
+                   </p>
+                   <p className="text-[10px] text-slate-500 truncate font-semibold">ยกเว้นตรวจ</p>
+                 </button>
+               </div>
+             </div>
+
+             {/* Mode Switcher Segmented Bar */}
+             <div className="grid grid-cols-2 gap-2 bg-slate-200/80 p-1.5 rounded-2xl shadow-inner">
+               <button
+                 type="button"
+                 onClick={() => setHubTab('checklist')}
+                 className={cn(
+                   "py-2.5 px-3 rounded-xl font-black text-xs transition-all flex items-center justify-center gap-2 cursor-pointer",
+                   hubTab === 'checklist' 
+                     ? "bg-white text-indigo-700 shadow-sm" 
+                     : "text-slate-600 hover:text-slate-900"
+                 )}
+               >
+                 <ListChecks className="w-4 h-4 text-indigo-600" />
+                 <span>รายการเครื่องประจำกะ</span>
+                 {shiftEquipmentsStatus.pendingList.length > 0 && (
+                   <span className="px-1.5 py-0.5 rounded-full bg-rose-500 text-white text-[9px] font-mono font-bold">
+                     {shiftEquipmentsStatus.pendingList.length}
+                   </span>
+                 )}
+               </button>
+
+               <button
+                 type="button"
+                 onClick={() => { setHubTab('scan'); setShowCamera(false); setScanError(''); }}
+                 className={cn(
+                   "py-2.5 px-3 rounded-xl font-black text-xs transition-all flex items-center justify-center gap-2 cursor-pointer",
+                   hubTab === 'scan' 
+                     ? "bg-white text-indigo-700 shadow-sm" 
+                     : "text-slate-600 hover:text-slate-900"
+                 )}
+               >
+                 <Camera className="w-4 h-4 text-indigo-600" />
+                 <span>สแกน QR โค้ด</span>
+               </button>
+             </div>
+
+             {/* TAB 1: CHECKLIST VIEW (What floor operators asked for!) */}
+             {hubTab === 'checklist' && (
+               <div className="space-y-4">
+                 {/* Sub-filter tabs & Search Bar */}
+                 <div className="bg-white rounded-2xl border border-slate-200/80 p-3 shadow-sm space-y-3">
+                   {/* Search Input */}
+                   <div className="relative">
+                     <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                     <input 
+                       type="text"
+                       value={searchFilter}
+                       onChange={e => setSearchFilter(e.target.value)}
+                       placeholder="ค้นหาชื่อเครื่อง, รหัส (เช่น MI-035, TGA)..."
+                       className="w-full pl-9 pr-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-semibold focus:outline-none focus:border-indigo-500 focus:bg-white"
+                     />
+                     {searchFilter && (
+                       <button 
+                         type="button" 
+                         onClick={() => setSearchFilter('')}
+                         className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+                       >
+                         <X className="w-3.5 h-3.5" />
+                       </button>
+                     )}
+                   </div>
+
+                   {/* Sub-filters Pills */}
+                   <div className="flex items-center gap-1.5 overflow-x-auto pb-1 text-xs">
+                     <button
+                       type="button"
+                       onClick={() => setChecklistFilter('pending')}
+                       className={cn(
+                         "px-3 py-1.5 rounded-xl font-black whitespace-nowrap transition-all cursor-pointer flex items-center gap-1.5 text-xs",
+                         checklistFilter === 'pending'
+                           ? "bg-rose-600 text-white shadow-xs"
+                           : "bg-slate-100 text-slate-600 hover:bg-slate-200"
+                       )}
+                     >
+                       <span className="w-1.5 h-1.5 rounded-full bg-white"></span>
+                       <span>ค้างตรวจ ({shiftEquipmentsStatus.pendingList.length})</span>
+                     </button>
+
+                     <button
+                       type="button"
+                       onClick={() => setChecklistFilter('completed')}
+                       className={cn(
+                         "px-3 py-1.5 rounded-xl font-black whitespace-nowrap transition-all cursor-pointer flex items-center gap-1.5 text-xs",
+                         checklistFilter === 'completed'
+                           ? "bg-emerald-600 text-white shadow-xs"
+                           : "bg-slate-100 text-slate-600 hover:bg-slate-200"
+                       )}
+                     >
+                       <Check className="w-3.5 h-3.5" />
+                       <span>ตรวจเสร็จแล้ว ({shiftEquipmentsStatus.checkedList.length})</span>
+                     </button>
+
+                     {shiftEquipmentsStatus.exemptEqs.length > 0 && (
                        <button
                          type="button"
-                         onClick={() => handleUnlockRepairedEq(maintenanceEqToUnlock)}
-                         className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold rounded-xl text-xs cursor-pointer shadow-sm transition-all flex items-center justify-center gap-1.5 shrink-0 active:scale-95"
+                         onClick={() => setChecklistFilter('exempt')}
+                         className={cn(
+                           "px-3 py-1.5 rounded-xl font-black whitespace-nowrap transition-all cursor-pointer flex items-center gap-1.5 text-xs",
+                           checklistFilter === 'exempt'
+                             ? "bg-amber-600 text-white shadow-xs"
+                             : "bg-slate-100 text-slate-600 hover:bg-slate-200"
+                         )}
                        >
                          <Wrench className="w-3.5 h-3.5" />
-                         <span>ปลดล็อกเครื่องซ่อมเสร็จ</span>
+                         <span>ปิดซ่อม ({shiftEquipmentsStatus.exemptEqs.length})</span>
                        </button>
-                     </div>
+                     )}
+
+                     <button
+                       type="button"
+                       onClick={() => setChecklistFilter('all')}
+                       className={cn(
+                         "px-3 py-1.5 rounded-xl font-black whitespace-nowrap transition-all cursor-pointer text-xs",
+                         checklistFilter === 'all'
+                           ? "bg-slate-900 text-white shadow-xs"
+                           : "bg-slate-100 text-slate-600 hover:bg-slate-200"
+                       )}
+                     >
+                       <span>ทั้งหมด ({shiftEquipmentsStatus.requiredEqs.length})</span>
+                     </button>
+                   </div>
+                 </div>
+
+                 {/* Machine Cards List */}
+                 <div className="space-y-3">
+                   {/* PENDING LIST */}
+                   {(checklistFilter === 'pending' || checklistFilter === 'all') && (
+                     <>
+                       {checklistFilter === 'all' && (
+                         <div className="flex items-center gap-2 pt-2">
+                           <span className="w-2.5 h-2.5 rounded-full bg-rose-500"></span>
+                           <h4 className="text-xs font-black text-slate-800 uppercase tracking-wider">
+                             รายการที่ยังค้างตรวจ ({shiftEquipmentsStatus.pendingList.length} เครื่อง)
+                           </h4>
+                         </div>
+                       )}
+
+                       {shiftEquipmentsStatus.pendingList.length === 0 ? (
+                         checklistFilter === 'pending' && (
+                           <div className="bg-white rounded-3xl border border-emerald-200 p-8 text-center space-y-3 shadow-sm">
+                             <div className="w-16 h-16 rounded-2xl bg-emerald-50 text-emerald-600 mx-auto flex items-center justify-center border border-emerald-100 shadow-inner">
+                               <Sparkles className="w-8 h-8 text-emerald-600 animate-bounce" />
+                             </div>
+                             <h4 className="text-base font-black text-slate-900">ตรวจครบถ้วนทุกเครื่องในกะนี้แล้ว!</h4>
+                             <p className="text-xs text-slate-500 max-w-sm mx-auto">
+                               เครื่องจักรทุกเครื่องที่ต้องตรวจใน{shift === 'DAY' ? 'กะเช้า' : 'กะดึก'}ได้รับการบันทึกครบถ้วน 100% สอดคล้องตามเกณฑ์มาตรฐาน
+                             </p>
+                             <button
+                               type="button"
+                               onClick={() => setChecklistFilter('completed')}
+                               className="px-4 py-2 bg-emerald-50 text-emerald-700 font-bold text-xs rounded-xl hover:bg-emerald-100 transition-colors cursor-pointer border border-emerald-200"
+                             >
+                               ดูรายการเครื่องที่ตรวจเสร็จแล้ว ({shiftEquipmentsStatus.checkedList.length})
+                             </button>
+                           </div>
+                         )
+                       ) : (
+                         shiftEquipmentsStatus.pendingList
+                           .filter(eq => {
+                             if (!searchFilter) return true;
+                             const q = searchFilter.toLowerCase();
+                             return eq.name.toLowerCase().includes(q) || eq.code.toLowerCase().includes(q) || (eq.location || '').toLowerCase().includes(q);
+                           })
+                           .map(eq => (
+                             <div 
+                               key={eq.id}
+                               className="bg-white rounded-2xl border border-rose-200/80 p-4 shadow-sm hover:shadow-md transition-all space-y-3 group"
+                             >
+                               <div className="flex items-start justify-between gap-3">
+                                 <div className="min-w-0">
+                                   <div className="flex items-center gap-2 mb-1 flex-wrap">
+                                     <span className="px-2 py-0.5 rounded-md bg-rose-50 text-rose-700 text-[10px] font-mono font-black border border-rose-200">
+                                       {eq.code}
+                                     </span>
+                                     <span className="px-2 py-0.5 rounded-md bg-rose-500 text-white text-[9px] font-bold">
+                                       🔴 ยังไม่ตรวจ
+                                     </span>
+                                     {getEquipmentShiftScope(eq) === 'DAY' && (
+                                       <span className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-amber-50 text-amber-700 border border-amber-200">
+                                         กะเช้าเท่านั้น
+                                       </span>
+                                     )}
+                                     {getEquipmentShiftScope(eq) === 'NIGHT' && (
+                                       <span className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-indigo-50 text-indigo-700 border border-indigo-200">
+                                         กะดึกเท่านั้น
+                                       </span>
+                                     )}
+                                   </div>
+                                   <h3 className="text-base font-black text-slate-900 group-hover:text-indigo-600 transition-colors">
+                                     {eq.name}
+                                   </h3>
+                                   <p className="text-xs text-slate-500 font-medium flex items-center gap-1.5 mt-0.5">
+                                     <MapPin className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                                     <span>{(eq.location || 'คลังทดสอบ').replace('น้อง', 'ห้อง')}</span>
+                                   </p>
+                                 </div>
+                               </div>
+
+                               {/* Action Buttons */}
+                               <div className="pt-2 border-t border-slate-100 flex items-center gap-2">
+                                 <button
+                                   type="button"
+                                   onClick={() => handleSelect(eq)}
+                                   className="flex-1 py-2.5 px-3 bg-rose-600 hover:bg-rose-700 active:scale-95 text-white font-black text-xs rounded-xl shadow-xs transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+                                 >
+                                   <Zap className="w-4 h-4 fill-white" />
+                                   <span>⚡ ตรวจเครื่องนี้</span>
+                                 </button>
+                                 <button
+                                   type="button"
+                                   onClick={() => {
+                                     setScanCode(eq.code);
+                                     setHubTab('scan');
+                                     setShowCamera(true);
+                                     setScanError('');
+                                   }}
+                                   className="py-2.5 px-3.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs rounded-xl transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+                                   title="สแกน QR หน้าเครื่อง"
+                                 >
+                                   <Camera className="w-4 h-4 text-slate-600" />
+                                   <span>สแกน QR</span>
+                                 </button>
+                                </div>
+                             </div>
+                           ))
+                       )}
+                     </>
+                   )}
+
+                   {/* COMPLETED LIST */}
+                   {(checklistFilter === 'completed' || checklistFilter === 'all') && (
+                     <>
+                       {checklistFilter === 'all' && shiftEquipmentsStatus.checkedList.length > 0 && (
+                         <div className="flex items-center gap-2 pt-4">
+                           <span className="w-2.5 h-2.5 rounded-full bg-emerald-500"></span>
+                           <h4 className="text-xs font-black text-slate-800 uppercase tracking-wider">
+                             รายการที่ตรวจเสร็จแล้ว ({shiftEquipmentsStatus.checkedList.length} เครื่อง)
+                           </h4>
+                         </div>
+                       )}
+
+                       {checklistFilter === 'completed' && shiftEquipmentsStatus.checkedList.length === 0 && (
+                         <div className="bg-white rounded-3xl border border-slate-200 p-8 text-center space-y-2 text-slate-400">
+                           <Clock className="w-10 h-10 mx-auto text-slate-300" />
+                           <p className="text-xs font-bold">ยังไม่มีเครื่องที่ตรวจเสร็จในกะนี้</p>
+                           <button
+                             type="button"
+                             onClick={() => setChecklistFilter('pending')}
+                             className="text-indigo-600 text-xs font-bold hover:underline"
+                           >
+                             ไปที่รายการค้างตรวจ ({shiftEquipmentsStatus.pendingList.length})
+                           </button>
+                         </div>
+                       )}
+
+                       {shiftEquipmentsStatus.checkedList
+                         .filter(({ eq }) => {
+                           if (!searchFilter) return true;
+                           const q = searchFilter.toLowerCase();
+                           return eq.name.toLowerCase().includes(q) || eq.code.toLowerCase().includes(q) || (eq.location || '').toLowerCase().includes(q);
+                         })
+                         .map(({ eq, log }) => (
+                           <div 
+                             key={log.id || eq.id}
+                             className="bg-white rounded-2xl border border-emerald-100 p-4 shadow-2xs space-y-2.5"
+                           >
+                             <div className="flex items-start justify-between gap-3">
+                               <div className="min-w-0">
+                                 <div className="flex items-center gap-2 mb-1 flex-wrap">
+                                   <span className="px-2 py-0.5 rounded-md bg-emerald-50 text-emerald-700 text-[10px] font-mono font-black border border-emerald-200">
+                                     {eq.code}
+                                   </span>
+                                   <span className="px-2 py-0.5 rounded-md bg-emerald-100 text-emerald-800 text-[9px] font-bold flex items-center gap-1">
+                                     <Check className="w-3 h-3 text-emerald-600" /> ตรวจเสร็จแล้ว
+                                   </span>
+                                   <span className="text-[10px] font-mono font-bold text-slate-400">
+                                     ⏰ {format(new Date(log.timestamp), 'HH:mm')} น.
+                                   </span>
+                                 </div>
+                                 <h3 className="text-sm font-black text-slate-900 truncate">
+                                   {eq.name}
+                                 </h3>
+                                 <p className="text-[11px] text-slate-500 font-medium">
+                                   ผู้ตรวจ: <span className="font-bold text-slate-700">{log.operatorName}</span> · {log.notes || 'ทุกรายการปกติ'}
+                                 </p>
+                               </div>
+
+                               <button
+                                 type="button"
+                                 onClick={() => handleSelect(eq)}
+                                 className="px-3 py-1.5 bg-slate-50 hover:bg-slate-100 text-slate-600 font-bold text-[11px] rounded-xl border border-slate-200 transition-colors shrink-0 cursor-pointer"
+                               >
+                                 ตรวจซ้ำ / แก้ไข
+                               </button>
+                             </div>
+                           </div>
+                         ))}
+                     </>
+                   )}
+
+                   {/* EXEMPT LIST */}
+                   {(checklistFilter === 'exempt' || checklistFilter === 'all') && shiftEquipmentsStatus.exemptEqs.length > 0 && (
+                     <>
+                       {checklistFilter === 'all' && (
+                         <div className="flex items-center gap-2 pt-4">
+                           <span className="w-2.5 h-2.5 rounded-full bg-amber-500"></span>
+                           <h4 className="text-xs font-black text-slate-800 uppercase tracking-wider">
+                             เครื่องยกเว้น / อยู่ระหว่างปิดซ่อม ({shiftEquipmentsStatus.exemptEqs.length} เครื่อง)
+                           </h4>
+                         </div>
+                       )}
+
+                       {shiftEquipmentsStatus.exemptEqs.map(eq => (
+                         <div 
+                           key={eq.id}
+                           className="bg-amber-50/50 rounded-2xl border border-amber-200 p-4 shadow-2xs space-y-2"
+                         >
+                           <div className="flex items-start justify-between gap-3">
+                             <div className="min-w-0">
+                               <div className="flex items-center gap-2 mb-1">
+                                 <span className="px-2 py-0.5 rounded-md bg-white text-amber-800 text-[10px] font-mono font-black border border-amber-300">
+                                   {eq.code}
+                                 </span>
+                                 <span className="px-2 py-0.5 rounded-md bg-amber-100 text-amber-800 text-[9px] font-bold">
+                                   🛠️ ปิดปรับปรุงซ่อมแซม
+                                 </span>
+                               </div>
+                               <h3 className="text-sm font-black text-slate-900">{eq.name}</h3>
+                               <p className="text-[11px] text-amber-900 font-medium">
+                                 สาเหตุ: {eq.maintenanceReason || 'อยู่ระหว่างปิดซ่อมแซม (ระบบยกเว้นให้อัตโนมัติ)'}
+                               </p>
+                             </div>
+
+                             <button
+                               type="button"
+                               onClick={() => handleUnlockRepairedEq(eq)}
+                               className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-[11px] rounded-xl shadow-xs transition-all shrink-0 cursor-pointer flex items-center gap-1"
+                             >
+                               <Wrench className="w-3.5 h-3.5" />
+                               <span>ปลดล็อกซ่อมเสร็จ</span>
+                             </button>
+                           </div>
+                         </div>
+                       ))}
+                     </>
                    )}
                  </div>
-               )}
-             </div>
+               </div>
+             )}
 
+             {/* TAB 2: QR SCANNER VIEW */}
+             {hubTab === 'scan' && (
+               <div className="bg-white border border-slate-200/80 rounded-[2.5rem] shadow-xl overflow-hidden flex flex-col items-center p-6 sm:p-10 relative group">
+                 <div className="absolute top-0 right-0 w-48 h-48 bg-indigo-500/5 rounded-full blur-3xl -translate-y-1/2 translate-x-1/2 pointer-events-none"></div>
+                 
+                 <div className="w-16 h-16 bg-gradient-to-br from-indigo-50 to-indigo-100 rounded-2xl flex items-center justify-center mb-5 shadow-inner border border-indigo-100/50">
+                    <ScanLine className="w-8 h-8 text-indigo-600 animate-pulse" />
+                 </div>
+                 
+                 {showCamera ? (
+                   <div className="w-full aspect-square max-w-[280px] bg-slate-950 rounded-[2rem] overflow-hidden shadow-2xl mb-6 relative border-4 border-slate-100 ring-1 ring-slate-200/50">
+                      <video ref={videoRef} className="w-full h-full object-cover" />
+                      <canvas ref={canvasRef} className="hidden" />
+                      
+                      {/* Glowing Scan Bar */}
+                      <div className="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-transparent via-indigo-400 to-transparent animate-bounce shadow-[0_0_15px_rgba(79,70,229,0.8)]"></div>
+                      
+                      {/* QR corner reticles */}
+                      <div className="absolute top-4 left-4 w-8 h-8 border-t-4 border-l-4 border-indigo-400 rounded-tl-lg"></div>
+                      <div className="absolute top-4 right-4 w-8 h-8 border-t-4 border-r-4 border-indigo-400 rounded-tr-lg"></div>
+                      <div className="absolute bottom-4 left-4 w-8 h-8 border-b-4 border-l-4 border-indigo-400 rounded-bl-lg"></div>
+                      <div className="absolute bottom-4 right-4 w-8 h-8 border-b-4 border-r-4 border-indigo-400 rounded-br-lg"></div>
+
+                      <button 
+                        type="button"
+                        onClick={() => setShowCamera(false)} 
+                        className="absolute bottom-4 left-1/2 transform -translate-x-1/2 px-4 py-1.5 bg-rose-600 text-white font-bold rounded-xl shadow-lg text-[10px] hover:bg-rose-500 cursor-pointer"
+                      >
+                        ปิดกล้องสแกน
+                      </button>
+                   </div>
+                 ) : (
+                   <div className="w-full max-w-[280px] space-y-3 mb-6">
+                      <button 
+                        type="button"
+                        onClick={() => { setShowCamera(true); setScanError(''); }}
+                        className="w-full py-4 px-6 bg-gradient-to-r from-indigo-600 to-indigo-700 hover:from-indigo-500 hover:to-indigo-600 text-white font-bold rounded-2xl transition-all shadow-lg flex items-center justify-center gap-2.5 cursor-pointer relative overflow-hidden active:scale-95"
+                      >
+                        <Camera className="w-5 h-5 shrink-0" />
+                        <span className="text-sm tracking-wide">สแกนรหัสผ่านกล้องถ่ายรูป</span>
+                      </button>
+
+                      <button 
+                        type="button"
+                        onClick={() => fileInputRef.current?.click()}
+                        className="w-full py-3 px-6 bg-slate-50 hover:bg-slate-100 text-slate-700 font-bold border border-slate-200/80 rounded-2xl transition-all flex items-center justify-center gap-2 text-xs cursor-pointer"
+                      >
+                        <Upload className="w-4 h-4 text-slate-500" />
+                        <span>อัปโหลดภาพถ่ายคิวอาร์ (QR)</span>
+                      </button>
+                      <input 
+                        ref={fileInputRef} 
+                        type="file" 
+                        accept="image/*" 
+                        capture="environment" 
+                        onChange={handleFileUpload} 
+                        className="hidden" 
+                      />
+                   </div>
+                 )}
+
+                 {/* Manual entry override */}
+                 <form onSubmit={handleManualSubmit} className="w-full pt-4 border-t border-slate-100 flex gap-2">
+                   <input 
+                     type="text"
+                     value={scanCode}
+                     onChange={e => setScanCode(e.target.value)}
+                     placeholder="กรอกรหัสเครื่องจักรด้วยตัวเอง (เช่น MI-035)"
+                     className="flex-1 px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500/20 text-xs font-semibold placeholder:text-slate-400"
+                   />
+                   <button 
+                     type="submit"
+                     className="px-4 py-2.5 bg-slate-900 text-white rounded-xl font-bold text-xs hover:bg-slate-800 transition-colors cursor-pointer shrink-0"
+                   >
+                     ตรวจสอบรหัส
+                   </button>
+                 </form>
+
+                 {scanError && (
+                   <div className="mt-4 p-4 text-xs bg-rose-50 border border-rose-200 rounded-2xl space-y-3 w-full shadow-xs">
+                     <div className="flex items-start gap-2.5 text-rose-800 font-bold leading-relaxed">
+                       <AlertCircle className="w-5 h-5 text-rose-600 shrink-0 mt-0.5" />
+                       <span>{scanError}</span>
+                     </div>
+                     {maintenanceEqToUnlock && (
+                       <div className="pt-2.5 border-t border-rose-200/80 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 bg-white/70 p-3 rounded-xl border border-rose-100">
+                         <div>
+                           <p className="text-[11px] text-rose-900 font-black">เครื่องได้รับการซ่อมแซมเสร็จสิ้นแล้ว?</p>
+                           <p className="text-[10px] text-slate-500">สามารถกดปลดล็อกเพื่อเริ่มบันทึกตรวจเช็กได้ทันที</p>
+                         </div>
+                         <button
+                           type="button"
+                           onClick={() => handleUnlockRepairedEq(maintenanceEqToUnlock)}
+                           className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold rounded-xl text-xs cursor-pointer shadow-sm transition-all flex items-center justify-center gap-1.5 shrink-0 active:scale-95"
+                         >
+                           <Wrench className="w-3.5 h-3.5" />
+                           <span>ปลดล็อกเครื่องซ่อมเสร็จ</span>
+                         </button>
+                       </div>
+                     )}
+                   </div>
+                 )}
+
+                 {/* Quick Pending Machines Mini-list while on Scanner */}
+                 {shiftEquipmentsStatus.pendingList.length > 0 && (
+                   <div className="w-full mt-6 pt-5 border-t border-slate-100">
+                     <div className="flex items-center justify-between mb-3">
+                       <p className="text-[11px] font-black text-rose-600 flex items-center gap-1.5">
+                         <span className="w-2 h-2 rounded-full bg-rose-500 animate-pulse"></span>
+                         เครื่องที่ยังค้างตรวจ ({shiftEquipmentsStatus.pendingList.length} เครื่อง)
+                       </p>
+                       <button
+                         type="button"
+                         onClick={() => { setHubTab('checklist'); setChecklistFilter('pending'); }}
+                         className="text-[10px] font-bold text-indigo-600 hover:underline"
+                       >
+                         ดูทั้งหมด →
+                       </button>
+                     </div>
+                     <div className="flex gap-2 overflow-x-auto pb-2">
+                       {shiftEquipmentsStatus.pendingList.map(eq => (
+                         <button
+                           key={eq.id}
+                           type="button"
+                           onClick={() => handleSelect(eq)}
+                           className="p-2.5 bg-slate-50 hover:bg-rose-50 rounded-xl border border-slate-200 hover:border-rose-300 text-left shrink-0 w-36 transition-all cursor-pointer group"
+                         >
+                           <span className="px-1.5 py-0.5 rounded text-[9px] font-mono font-black bg-white border border-slate-200 text-slate-700">
+                             {eq.code}
+                           </span>
+                           <p className="text-xs font-black text-slate-800 mt-1 truncate group-hover:text-rose-600">
+                             {eq.name}
+                           </p>
+                           <p className="text-[9px] text-slate-400 truncate">
+                             {(eq.location || '').replace('น้อง', 'ห้อง')}
+                           </p>
+                         </button>
+                       ))}
+                     </div>
+                   </div>
+                 )}
+               </div>
+             )}
+
+             {/* Anti-fraud Advisory */}
              <div className="bg-amber-500/10 rounded-2xl p-4 border border-amber-300/60 flex gap-3 text-xs">
                 <AlertTriangle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
                 <div className="space-y-1">
                   <h3 className="font-extrabold text-amber-800 uppercase tracking-wide">มาตรการป้องกันทุจริตในสถานประกอบการ</h3>
                   <p className="text-amber-700 leading-relaxed font-medium">
-                    ผู้ตรวจต้องสแกนคิวอาร์โค้ดทางกายภาพเพื่อแสดงว่ามาตรวจจริง หากคอมพิวเตอร์ของคุณไม่มีกล้อง สามารถใช้แบบฟอร์มคีย์รหัส หรืออัปโหลดรูปภาพใบตรวจสอบเพื่อเป็นหลักฐาน
+                    ผู้ตรวจต้องสแกนคิวอาร์โค้ดทางกายภาพหรือตรวจสอบหน้าเครื่องจริงตามรายการ สามารถสแกนกล้อง หรือแตะเลือกเครื่องจากรายการประจำกะด้านบนเพื่อบันทึกผลได้ทันที
                   </p>
                 </div>
              </div>

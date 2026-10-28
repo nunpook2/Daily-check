@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { differenceInCalendarDays, addDays, format } from 'date-fns';
-import { fetchEquipments, fetchCheckItems, addEquipment, deleteEquipment, updateEquipment, addCheckItem, deleteCheckItem, updateCheckItem, fetchOperators, addOperator, deleteOperator, updateOperator, fetchTimeWindowSettings, saveTimeWindowSettings } from '../lib/db';
+import { fetchEquipments, fetchCheckItems, addEquipment, deleteEquipment, updateEquipment, addCheckItem, deleteCheckItem, updateCheckItem, fetchOperators, addOperator, deleteOperator, updateOperator, fetchTimeWindowSettings, fetchTimeWindowSettingsAsync, saveTimeWindowSettings } from '../lib/db';
 import { Equipment, CheckItem, Operator, TimeWindowSettings, ShiftScope, getEquipmentShiftScope, getCheckItemShiftScope, calculate33ShiftGroups } from '../types';
-import { Plus, Settings2, Users, MonitorSmartphone, QrCode, X, ListChecks, Info, Trash2, Edit2, Calendar, Printer, Clock, ArrowRight, Shuffle, Search, Briefcase } from 'lucide-react';
+import { Plus, Settings2, Users, MonitorSmartphone, QrCode, X, ListChecks, Info, Trash2, Edit2, Calendar, Printer, Clock, ArrowRight, Shuffle, Search, Briefcase, CheckCircle } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { motion, AnimatePresence } from 'motion/react';
 import { QRCodeSVG } from 'qrcode.react';
@@ -288,6 +288,9 @@ export default function Settings() {
   const [dayEnd, setDayEnd] = useState(initialTw.dayEnd || '10:00');
   const [nightStart, setNightStart] = useState(initialTw.nightStart || '20:00');
   const [nightEnd, setNightEnd] = useState(initialTw.nightEnd || '22:00');
+  const [isSavingTw, setIsSavingTw] = useState(false);
+  const [twSavedSuccess, setTwSavedSuccess] = useState(false);
+  const [twError, setTwError] = useState<string | null>(null);
   
   // Modal state
   const [qrModalEq, setQrModalEq] = useState<Equipment | null>(null);
@@ -322,12 +325,12 @@ export default function Settings() {
   }, []);
 
   const loadData = async () => {
-    const [eqs, itms, ops] = await Promise.all([
+    const [eqs, itms, ops, tw] = await Promise.all([
       fetchEquipments(),
       fetchCheckItems(),
-      fetchOperators()
+      fetchOperators(),
+      fetchTimeWindowSettingsAsync()
     ]);
-    const tw = fetchTimeWindowSettings();
     if (tw) {
       setDayStart(tw.dayStart || '08:00');
       setDayEnd(tw.dayEnd || '10:00');
@@ -453,15 +456,26 @@ export default function Settings() {
     setEditingOpShift(op.shift || 'DAY');
   };
 
-  const handleSaveTimeWindows = (e: React.FormEvent) => {
-    e.preventDefault();
-    saveTimeWindowSettings({
-      dayStart,
-      dayEnd,
-      nightStart,
-      nightEnd
-    });
-    alert('💾 บันทึกการตั้งค่ารอบเวลาตรวจเช็กค่าควบคุมประจำกะ สำเร็จ!');
+  const handleSaveTimeWindows = async (e?: React.FormEvent) => {
+    if (e && e.preventDefault) e.preventDefault();
+    setIsSavingTw(true);
+    setTwSavedSuccess(false);
+    setTwError(null);
+    try {
+      await saveTimeWindowSettings({
+        dayStart,
+        dayEnd,
+        nightStart,
+        nightEnd
+      });
+      setIsSavingTw(false);
+      setTwSavedSuccess(true);
+      setTimeout(() => setTwSavedSuccess(false), 4500);
+    } catch (err: any) {
+      console.error("Save time windows error:", err);
+      setIsSavingTw(false);
+      setTwError(err?.message || 'ไม่สามารถบันทึกได้ กรุณาลองใหม่อีกครั้ง');
+    }
   };
 
   const submitEditOperator = async (id: string) => {
@@ -672,40 +686,89 @@ export default function Settings() {
                   
                   {/* Time Window Settings */}
                   <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-4 sm:p-6 space-y-4">
-                    <h2 className="text-lg font-semibold text-slate-900 border-b border-slate-100 pb-2 flex items-center gap-2">
-                       <Clock className="w-5 h-5 text-indigo-600" />
-                       ⏰ ตั้งค่าเกณฑ์รอบเวลาตรวจสอบ (Time Windows)
-                    </h2>
+                    <div className="flex items-center justify-between border-b border-slate-100 pb-2">
+                      <h2 className="text-lg font-semibold text-slate-900 flex items-center gap-2">
+                        <Clock className="w-5 h-5 text-indigo-600" />
+                        ⏰ ตั้งค่าเกณฑ์รอบเวลาตรวจสอบ (Time Windows)
+                      </h2>
+                      {twSavedSuccess && (
+                        <span className="inline-flex items-center gap-1 px-2.5 py-0.5 bg-emerald-50 text-emerald-700 border border-emerald-200 text-[11px] font-black rounded-full animate-pulse">
+                          <CheckCircle className="w-3 h-3 text-emerald-600" />
+                          บันทึกสำเร็จ
+                        </span>
+                      )}
+                    </div>
+                    
                     <form onSubmit={handleSaveTimeWindows} className="space-y-4">
                         <p className="text-[11px] text-slate-400 font-bold leading-relaxed">
                            กำหนดช่วงเวลาสำหรับเช็กประจำรอบ (Daily) หากผู้ปฏิบัติงานสแกนคีย์นอกช่วงเวลานี้ ระบบจะขึ้นสถานะ "ตรวจช้า (Late)" บนไทม์ไลน์
                         </p>
+
+                        {/* Interactive Status Banners */}
+                        {twSavedSuccess && (
+                          <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-xl flex items-center gap-2.5 text-emerald-800 text-xs font-bold shadow-xs">
+                            <CheckCircle className="w-4 h-4 text-emerald-600 shrink-0" />
+                            <span>✓ บันทึกเกณฑ์รอบเวลาตรวจสอบเรียบร้อยแล้ว (เช้า: {dayStart} - {dayEnd} น. / ดึก: {nightStart} - {nightEnd} น.) ข้อมูลซิงค์ทุกอุปกรณ์ทันที</span>
+                          </div>
+                        )}
+
+                        {twError && (
+                          <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl flex items-center gap-2 text-rose-800 text-xs font-bold">
+                            <span>❌ {twError}</span>
+                          </div>
+                        )}
+
                         <div className="grid grid-cols-2 gap-3">
                            <div>
                               <label className="block text-[11px] font-black text-slate-700 mb-1">🌞 กะเช้า เริ่ม (Day Start)</label>
                               <input type="time" required value={dayStart} onChange={e => setDayStart(e.target.value)}
-                                     className="w-full px-3 py-2 border border-slate-200 rounded-lg text-xs font-bold" />
+                                     className="w-full px-3 py-2 border border-slate-200 rounded-lg text-xs font-bold focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 bg-white" />
                            </div>
                            <div>
                               <label className="block text-[11px] font-black text-slate-700 mb-1">🌞 กะเช้า สิ้นสุด (Day End)</label>
                               <input type="time" required value={dayEnd} onChange={e => setDayEnd(e.target.value)}
-                                     className="w-full px-3 py-2 border border-slate-200 rounded-lg text-xs font-bold" />
+                                     className="w-full px-3 py-2 border border-slate-200 rounded-lg text-xs font-bold focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 bg-white" />
                            </div>
                         </div>
                         <div className="grid grid-cols-2 gap-3">
                            <div>
                               <label className="block text-[11px] font-black text-slate-700 mb-1">🌙 กะดึก เริ่ม (Night Start)</label>
                               <input type="time" required value={nightStart} onChange={e => setNightStart(e.target.value)}
-                                     className="w-full px-3 py-2 border border-slate-200 rounded-lg text-xs font-bold" />
+                                     className="w-full px-3 py-2 border border-slate-200 rounded-lg text-xs font-bold focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 bg-white" />
                            </div>
                            <div>
                               <label className="block text-[11px] font-black text-slate-700 mb-1">🌙 กะดึก สิ้นสุด (Night End)</label>
                               <input type="time" required value={nightEnd} onChange={e => setNightEnd(e.target.value)}
-                                     className="w-full px-3 py-2 border border-slate-200 rounded-lg text-xs font-bold" />
+                                     className="w-full px-3 py-2 border border-slate-200 rounded-lg text-xs font-bold focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 bg-white" />
                            </div>
                         </div>
-                        <button type="submit" className="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-indigo-600 text-white font-bold rounded-lg hover:bg-indigo-700 transition-colors text-xs cursor-pointer shadow-xs">
-                           บันทึกเกณฑ์รอบเวลาตรวจ
+
+                        <button 
+                          type="button" 
+                          onClick={() => handleSaveTimeWindows()}
+                          disabled={isSavingTw}
+                          className={cn(
+                            "w-full flex items-center justify-center gap-2 px-4 py-2.5 text-white font-black rounded-xl transition-all text-xs cursor-pointer shadow-xs active:scale-[0.99]",
+                            twSavedSuccess 
+                              ? "bg-emerald-600 hover:bg-emerald-700 shadow-emerald-100" 
+                              : "bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-400"
+                          )}
+                        >
+                          {isSavingTw ? (
+                            <>
+                              <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                              <span>กำลังบันทึกข้อมูล...</span>
+                            </>
+                          ) : twSavedSuccess ? (
+                            <>
+                              <CheckCircle className="w-4 h-4" />
+                              <span>✓ บันทึกเกณฑ์เวลาสำเร็จเรียบร้อยแล้ว</span>
+                            </>
+                          ) : (
+                            <>
+                              <span>บันทึกเกณฑ์รอบเวลาตรวจ</span>
+                            </>
+                          )}
                         </button>
                     </form>
                   </div>

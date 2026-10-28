@@ -31,6 +31,15 @@ function App() {
     if (eqCode) {
       setInitialEqCode(eqCode);
       setCurrentView('check');
+      // Remove query parameters from URL so navigating to other tabs doesn't bounce back
+      try {
+        const url = new URL(window.location.href);
+        ['eqCode', 'id', 'equipmentId', 'code', 'eq', 'machine'].forEach(p => url.searchParams.delete(p));
+        const newSearch = url.searchParams.toString();
+        window.history.replaceState({}, document.title, url.pathname + (newSearch ? `?${newSearch}` : ''));
+      } catch (e) {
+        console.warn("Could not clear search params", e);
+      }
     }
 
     const loadOp = async () => {
@@ -51,7 +60,7 @@ function App() {
       }
     };
     loadOp();
-  }, [currentView]);
+  }, []);
 
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col md:flex-row text-slate-800 font-sans selection:bg-indigo-100 selection:text-indigo-900">
@@ -183,7 +192,7 @@ function App() {
             )}
             {currentView === 'ooc_logs' && <OocLogs selectedDept="all" />}
             {currentView === 'check' && (
-              <PerformCheck onSaved={() => setCurrentView('dashboard')} initialEqCode={initialEqCode} selectedDept="all" />
+              <PerformCheck onSaved={() => setInitialEqCode(undefined)} initialEqCode={initialEqCode} selectedDept="all" />
             )}
             {currentView === 'settings' && <Settings />}
          </div>

@@ -9,7 +9,9 @@ import {
   doc,
   writeBatch,
   updateDoc,
-  deleteField
+  deleteField,
+  setDoc,
+  getDoc
 } from "firebase/firestore";
 import { db } from "./firebase";
 import { Equipment, CheckItem, CheckLog, Operator, TimeWindowSettings, getEquipmentShiftScope } from "../types";
@@ -501,6 +503,9 @@ export async function fetchLogs(dateKey: string): Promise<CheckLog[]> {
       const otherLogs = mockLogs.filter(l => l.dateKey !== dateKey);
       mockLogs = [...otherLogs, ...list];
       setLocalStorage('lab_logs', mockLogs);
+      
+      // Attempt background sync of any previously offline pending logs
+      syncOfflinePendingLogs().catch(() => {});
       return list;
     }
     return mockLogs.filter(l => l.dateKey === dateKey);
@@ -508,6 +513,36 @@ export async function fetchLogs(dateKey: string): Promise<CheckLog[]> {
     console.warn("Firestore fetchLogs access error or timeout, serving fallback data.", error);
     return mockLogs.filter(l => l.dateKey === dateKey);
   }
+}
+
+// Background sync for logs submitted while mobile devices had poor Wi-Fi/cellular connection
+export async function syncOfflinePendingLogs(): Promise<number> {
+  const pending = getLocalStorage<Omit<CheckLog, 'id'>[]>('lab_pending_sync_logs', []);
+  if (!pending || pending.length === 0) return 0;
+
+  const remaining: Omit<CheckLog, 'id'>[] = [];
+  let syncedCount = 0;
+
+  for (const item of pending) {
+    try {
+      const cleanLog = cleanObject(item);
+      await withTimeout(addDoc(collection(db, "logs"), cleanLog), 4000);
+      syncedCount++;
+    } catch (err) {
+      console.warn("Failed to sync offline log, keeping in retry queue:", err);
+      remaining.push(item);
+    }
+  }
+
+  setLocalStorage('lab_pending_sync_logs', remaining);
+  return syncedCount;
+}
+
+// Setup auto-sync on browser reconnect
+if (typeof window !== 'undefined') {
+  window.addEventListener('online', () => {
+    syncOfflinePendingLogs().catch(console.error);
+  });
 }
 
 export async function saveCheckLog(log: Omit<CheckLog, 'id'>): Promise<string> {
@@ -519,14 +554,18 @@ export async function saveCheckLog(log: Omit<CheckLog, 'id'>): Promise<string> {
   mockLogs.unshift(newLog);
   setLocalStorage('lab_logs', mockLogs);
 
-  // 2. Persist to Firestore with 3-second timeout
+  // 2. Persist to Firestore with 3.5-second timeout
   try {
-    const docRef = await withTimeout(addDoc(collection(db, "logs"), cleanLog), 3000);
+    const docRef = await withTimeout(addDoc(collection(db, "logs"), cleanLog), 3500);
     newLog.id = docRef.id;
     setLocalStorage('lab_logs', mockLogs);
     return docRef.id;
   } catch (error) {
-    console.warn("Firestore saveCheckLog timed out or failed, log saved locally in offline cache.", error);
+    console.warn("Firestore saveCheckLog timed out or failed, log saved locally in offline queue.", error);
+    // Queue for automatic retry when network stabilizes
+    const pending = getLocalStorage<Omit<CheckLog, 'id'>[]>('lab_pending_sync_logs', []);
+    pending.push(log);
+    setLocalStorage('lab_pending_sync_logs', pending);
     return mockId;
   }
 }
@@ -623,10 +662,41 @@ const defaultTimeWindow: TimeWindowSettings = {
   nightEnd: '22:00'
 };
 
+export async function fetchTimeWindowSettingsAsync(): Promise<TimeWindowSettings> {
+  try {
+    const docRef = doc(db, "app_settings", "time_window");
+    const snap = await withTimeout(getDoc(docRef), 2500);
+    if (snap.exists()) {
+      const data = snap.data() as TimeWindowSettings;
+      if (data && data.dayStart && data.dayEnd && data.nightStart && data.nightEnd) {
+        setLocalStorage('time_window_settings', data);
+        return data;
+      }
+    }
+  } catch (e) {
+    console.warn("Could not fetch time_window from Firestore, using local cache:", e);
+  }
+  return getLocalStorage('time_window_settings', defaultTimeWindow);
+}
+
 export function fetchTimeWindowSettings(): TimeWindowSettings {
   return getLocalStorage('time_window_settings', defaultTimeWindow);
 }
 
-export function saveTimeWindowSettings(settings: TimeWindowSettings): void {
+export async function saveTimeWindowSettings(settings: TimeWindowSettings): Promise<void> {
+  // 1. Immediately cache in localStorage for instant synchronous reads
   setLocalStorage('time_window_settings', settings);
+
+  // 2. Dispatch event so other components listening on same window update in real-time
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent('time_window_settings_updated', { detail: settings }));
+  }
+
+  // 3. Persist to Cloud Firestore across all devices and users
+  try {
+    const docRef = doc(db, "app_settings", "time_window");
+    await withTimeout(setDoc(docRef, cleanObject(settings), { merge: true }), 4000);
+  } catch (err) {
+    console.error("Failed to save time_window to Firestore:", err);
+  }
 }
