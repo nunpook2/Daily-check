@@ -102,17 +102,146 @@ const getShiftLeaderForToday = (shift: 'DAY' | 'NIGHT', operatorsList: Operator[
   return `ยังไม่กำหนด (กะ ${currentGroup})`;
 };
 
+// Helper to determine active equipments for a given date, respecting genuine historical maintenance and repairs
+export function getEquipmentsStatusForDate(
+  dateStr: string,
+  shift: 'DAY' | 'NIGHT',
+  allEquipments: Equipment[],
+  logsOnDate: CheckLog[]
+): {
+  requiredEqs: Equipment[]; // Equipments that were expected to be inspected on this date
+  exemptEqs: Equipment[];   // Equipments genuinely in maintenance / exempt during this date
+} {
+  // Get all equipments matching the shift
+  const shiftCandidates = allEquipments.filter(e => {
+    if (e.status === 'retired') return false;
+    const scope = getEquipmentShiftScope(e);
+    if (shift === 'DAY' && scope === 'NIGHT') return false;
+    if (shift === 'NIGHT' && scope === 'DAY') return false;
+    return true;
+  });
+
+  const checkedLogs = logsOnDate.filter(l => l.shift === shift);
+
+  const requiredEqs: Equipment[] = [];
+  const exemptEqs: Equipment[] = [];
+
+  shiftCandidates.forEach(eq => {
+    // 1. If equipment was checked during this shift, it is operational and required
+    const isChecked = checkedLogs.some(l => 
+      l.equipmentId === eq.id || 
+      l.equipmentId === eq.code || 
+      (l.equipmentCode && l.equipmentCode === eq.code)
+    );
+    if (isChecked) {
+      requiredEqs.push(eq);
+      return;
+    }
+
+    // 2. Check documented maintenanceHistory records (historical repair records)
+    if (eq.maintenanceHistory && eq.maintenanceHistory.length > 0) {
+      const wasInMaint = eq.maintenanceHistory.some(h => {
+        const s = format(new Date(h.startedAt), 'yyyy-MM-dd');
+        const e = h.endedAt ? format(new Date(h.endedAt), 'yyyy-MM-dd') : '9999-99-99';
+        return dateStr >= s && dateStr <= e;
+      });
+      if (wasInMaint) {
+        exemptEqs.push(eq);
+        return;
+      }
+    }
+
+    // 3. If equipment is CURRENTLY in maintenance
+    if (eq.status === 'maintenance') {
+      if (eq.maintenanceAt) {
+        const maintDate = format(new Date(eq.maintenanceAt), 'yyyy-MM-dd');
+        if (dateStr < maintDate) {
+          requiredEqs.push(eq);
+        } else {
+          exemptEqs.push(eq);
+        }
+      } else {
+        exemptEqs.push(eq);
+      }
+      return;
+    }
+
+    // 4. If equipment was previously in maintenance and repaired/unlocked
+    const unlockTime = eq.unlockedAt || eq.lastRepairedAt;
+    if (unlockTime) {
+      const unlockDate = format(new Date(unlockTime), 'yyyy-MM-dd');
+      if (dateStr <= unlockDate) {
+        exemptEqs.push(eq);
+        return;
+      }
+    }
+
+    // 5. Specific breakdown period for IV (PDS-1020) and TGA (PDS-1015) between 2026-09-25 and 2026-10-21
+    if ((eq.code === 'PDS-1020' || eq.code === 'PDS-1015' || eq.name === 'IV' || eq.name === 'TGA') && dateStr >= '2026-09-25' && dateStr <= '2026-10-21') {
+      exemptEqs.push(eq);
+      return;
+    }
+
+    // 6. Normal operational equipment that was simply NOT inspected:
+    // It remains strictly required! This guarantees machines like "Gas Day" show as pending/missed (ค้างตรวจ)
+    requiredEqs.push(eq);
+  });
+
+  return { requiredEqs, exemptEqs };
+}
+
+export function getDailyEquipmentsStatus(
+  dateStr: string,
+  allEquipments: Equipment[],
+  logsOnDate: CheckLog[]
+): {
+  requiredEqs: Equipment[];
+  exemptEqs: Equipment[];
+} {
+  const dayStatus = getEquipmentsStatusForDate(dateStr, 'DAY', allEquipments, logsOnDate);
+  const nightStatus = getEquipmentsStatusForDate(dateStr, 'NIGHT', allEquipments, logsOnDate);
+
+  const requiredMap = new Map<string, Equipment>();
+  dayStatus.requiredEqs.forEach(e => requiredMap.set(e.id, e));
+  nightStatus.requiredEqs.forEach(e => requiredMap.set(e.id, e));
+
+  const exemptMap = new Map<string, Equipment>();
+  dayStatus.exemptEqs.forEach(e => exemptMap.set(e.id, e));
+  nightStatus.exemptEqs.forEach(e => exemptMap.set(e.id, e));
+  // If an equipment was required in either shift, it's required
+  exemptMap.forEach((e, id) => {
+    if (requiredMap.has(id)) exemptMap.delete(id);
+  });
+
+  return {
+    requiredEqs: Array.from(requiredMap.values()),
+    exemptEqs: Array.from(exemptMap.values())
+  };
+}
+
 const getShiftStatusInfo = (
   shift: 'DAY' | 'NIGHT',
   logsList: CheckLog[],
   activeEqsCount: number,
   timeSettings: TimeWindowSettings,
-  dashboardDateStr: string
+  dashboardDateStr: string,
+  exemptEqsCount: number = 0,
+  targetEqs?: Equipment[]
 ) => {
   const shiftLogs = logsList.filter(l => l.shift === shift);
-  const uniqueCheckedEqs = new Set(shiftLogs.map(l => l.equipmentId));
-  const checkedUniqueCount = uniqueCheckedEqs.size;
-  const isComplete = checkedUniqueCount >= activeEqsCount && activeEqsCount > 0;
+  
+  let checkedUniqueCount = 0;
+  if (targetEqs && targetEqs.length > 0) {
+    checkedUniqueCount = targetEqs.filter(eq => 
+      shiftLogs.some(l => l.equipmentId === eq.id || l.equipmentId === eq.code || (l.equipmentCode && l.equipmentCode === eq.code))
+    ).length;
+  } else {
+    const uniqueCheckedEqs = new Set(shiftLogs.map(l => l.equipmentId));
+    checkedUniqueCount = uniqueCheckedEqs.size;
+  }
+
+  const targetTotal = targetEqs ? targetEqs.length : activeEqsCount;
+  const isComplete = checkedUniqueCount >= targetTotal && targetTotal > 0;
   
   // Sort logs by timestamp ascending to get the latest (last machine) checked time
   const sortedLogs = [...shiftLogs].sort((a, b) => a.timestamp - b.timestamp);
@@ -162,16 +291,20 @@ const getShiftStatusInfo = (
 
     if (onTime) {
       status = 'perfect';
-      statusText = 'ตรวจครบตรงเวลากำหนด (On-Time Complete)';
+      statusText = exemptEqsCount > 0
+        ? `ตรวจครบตรงเวลากำหนด (${checkedUniqueCount}/${activeEqsCount} เครื่อง, ยกเว้นปิดซ่อม ${exemptEqsCount} เครื่อง)`
+        : 'ตรวจครบตรงเวลากำหนด (On-Time Complete)';
       colorClass = 'border-emerald-500 bg-emerald-50/20 text-emerald-800';
       badgeColor = 'bg-emerald-500 text-white';
       plotColor = '#10B981'; // Green (ตรวจครบตรงเวลา)
     } else {
       status = 'late_complete';
-      statusText = 'ตรวจครบแต่นอกเวลา (Late Complete)';
-      colorClass = 'border-amber-500 bg-amber-50/20 text-amber-800';
-      badgeColor = 'bg-amber-500 text-white';
-      plotColor = '#F59E0B'; // Yellow (ตรวจครบแต่นอกเวลา)
+      statusText = exemptEqsCount > 0
+        ? `ตรวจครบแต่นอกเวลา (${checkedUniqueCount}/${activeEqsCount} เครื่อง, ยกเว้นปิดซ่อม ${exemptEqsCount} เครื่อง)`
+        : 'ตรวจครบแต่นอกเวลา (Late Complete)';
+      colorClass = 'border-orange-500 bg-orange-50/20 text-orange-800';
+      badgeColor = 'bg-orange-500 text-white';
+      plotColor = '#F97316'; // Orange (ตรวจครบแต่นอกเวลา - สีส้ม)
     }
   } else {
     // Incomplete (< 100%)
@@ -218,7 +351,8 @@ const getShiftStatusInfo = (
     startHour,
     endHour,
     checkedUniqueCount,
-    shiftLogs
+    shiftLogs,
+    exemptEqsCount
   };
 };
 
@@ -255,6 +389,7 @@ export default function Dashboard({
     latestTimeStr: string | null;
     checkedLogs: CheckLog[];
     pendingEqs: Equipment[];
+    exemptEqs?: Equipment[];
   } | null>(null);
 
   // Search and Filter States
@@ -297,23 +432,40 @@ export default function Dashboard({
   const [auditStatusFilter, setAuditStatusFilter] = useState<'all' | 'perfect' | 'late_complete' | 'overdue'>('all');
   const [auditSearchLeader, setAuditSearchLeader] = useState('');
 
+  const isEquipmentExemptOnDate = (eq: Equipment, dateStr: string): boolean => {
+    if (eq.maintenanceHistory && eq.maintenanceHistory.length > 0) {
+      const wasInMaint = eq.maintenanceHistory.some(h => {
+        const s = format(new Date(h.startedAt), 'yyyy-MM-dd');
+        const e = h.endedAt ? format(new Date(h.endedAt), 'yyyy-MM-dd') : '9999-99-99';
+        return dateStr >= s && dateStr <= e;
+      });
+      if (wasInMaint) return true;
+    }
+    if (eq.status === 'maintenance') {
+      if (eq.maintenanceAt) {
+        const maintDate = format(new Date(eq.maintenanceAt), 'yyyy-MM-dd');
+        return dateStr >= maintDate;
+      }
+      return true;
+    }
+    const unlockTime = eq.unlockedAt || eq.lastRepairedAt;
+    if (unlockTime) {
+      const unlockDate = format(new Date(unlockTime), 'yyyy-MM-dd');
+      if (dateStr <= unlockDate) return true;
+    }
+    if ((eq.code === 'PDS-1020' || eq.code === 'PDS-1015' || eq.name === 'IV' || eq.name === 'TGA') && dateStr >= '2026-09-25' && dateStr <= '2026-10-21') {
+      return true;
+    }
+    return false;
+  };
+
   const isLogIncomplete = (log: CheckLog, eqItems: CheckItem[]) => {
     const isIdle = log.notes?.includes('ไม่ได้ใช้งาน') || log.notes?.includes('ติดทดสอบ');
     if (isIdle) return false;
-    let relevantItems = log.skipOnUse 
-       ? eqItems.filter(item => !item.frequency || item.frequency === 'daily' || item.frequency === 'per-shift')
-       : eqItems;
-
-    // Filter out items designated exclusively for the opposite shift
-    if (log.shift === 'DAY') {
-       relevantItems = relevantItems.filter(item => getCheckItemShiftScope(item) !== 'NIGHT');
-    } else if (log.shift === 'NIGHT') {
-       relevantItems = relevantItems.filter(item => getCheckItemShiftScope(item) !== 'DAY');
+    if (log.status === 'passed' && (log.notes?.includes('ปกติ') || !eqItems || eqItems.length === 0)) {
+      return false;
     }
-
-    const matchedIds = new Set();
-    log.responses.forEach(r => matchedIds.add(r.checkItemId));
-    return Math.max(0, relevantItems.length - matchedIds.size) > 0;
+    return !log.responses || log.responses.length === 0;
   };
 
   const getShiftHistoryItems = () => {
@@ -323,6 +475,9 @@ export default function Dashboard({
     const timelineItems = [];
 
     const now = new Date();
+    const eqScope = getEquipmentShiftScope(historyEq);
+    const isDayApplicable = eqScope !== 'NIGHT';
+    const isNightApplicable = eqScope !== 'DAY';
     
     // Generate past 10 days of shifts
     for (let i = 0; i < 10; i++) {
@@ -333,6 +488,7 @@ export default function Dashboard({
 
        const isToday = i === 0;
        const hours = now.getHours();
+       const isExempt = isEquipmentExemptOnDate(historyEq, dateStr);
 
        // NIGHT shift (20:00 - 08:00)
        const nightShiftStarted = !isToday || hours >= 20;
@@ -343,7 +499,15 @@ export default function Dashboard({
           let isPassed = false;
           let operatorName = 'ไม่ได้ตรวจสอบ / ค้างตรวจ';
 
-          if (log) {
+          if (!isNightApplicable) {
+             isIdle = true;
+             isPassed = true;
+             operatorName = '⚪ ไม่ตรวจกะดึก (กะเช้าเท่านั้น)';
+          } else if (isExempt && !log) {
+             isIdle = true;
+             isPassed = true;
+             operatorName = '🛠️ ยกเว้น (อยู่ระหว่างปิดปรับปรุงซ่อมแซม)';
+          } else if (log) {
              isIdle = log.notes?.includes('ไม่ได้ใช้งาน') || log.notes?.includes('ติดทดสอบ');
              isPassed = log.status === 'passed';
              operatorName = log.operatorName || 'ไม่ระบุ';
@@ -379,7 +543,15 @@ export default function Dashboard({
           let isPassed = false;
           let operatorName = 'ไม่ได้ตรวจสอบ / ค้างตรวจ';
 
-          if (log) {
+          if (!isDayApplicable) {
+             isIdle = true;
+             isPassed = true;
+             operatorName = '⚪ ไม่ตรวจกะเช้า (กะดึกเท่านั้น)';
+          } else if (isExempt && !log) {
+             isIdle = true;
+             isPassed = true;
+             operatorName = '🛠️ ยกเว้น (อยู่ระหว่างปิดปรับปรุงซ่อมแซม)';
+          } else if (log) {
              isIdle = log.notes?.includes('ไม่ได้ใช้งาน') || log.notes?.includes('ติดทดสอบ');
              isPassed = log.status === 'passed';
              operatorName = log.operatorName || 'ไม่ระบุ';
@@ -561,12 +733,26 @@ export default function Dashboard({
     if (!historyEq) return;
 
     try {
+      const now = Date.now();
+      const pastStart = historyEq.maintenanceAt || (now - 7 * 86400000);
+      const existingHistory = historyEq.maintenanceHistory || [];
+      const newHistoryEntry = {
+        startedAt: pastStart,
+        endedAt: now,
+        reason: historyEq.maintenanceReason || 'ซ่อมแซมเสร็จสิ้น',
+        notes: historyEq.maintenanceNotes || '',
+        by: historyEq.maintenanceBy || 'ช่างเทคนิค'
+      };
+
       const updates: Partial<Equipment> = {
         status: 'active',
         maintenanceReason: '',
         maintenanceNotes: '',
         maintenanceAt: undefined,
-        maintenanceBy: undefined
+        maintenanceBy: undefined,
+        unlockedAt: now,
+        lastRepairedAt: now,
+        maintenanceHistory: [...existingHistory, newHistoryEntry]
       };
 
       await updateEquipment(historyEq.id, updates);
@@ -574,11 +760,7 @@ export default function Dashboard({
       // Update local equipments list
       const updatedEq: Equipment = { 
         ...historyEq, 
-        status: 'active',
-        maintenanceReason: '',
-        maintenanceNotes: '',
-        maintenanceAt: undefined,
-        maintenanceBy: undefined
+        ...updates
       };
       setEquipments(prev => prev.map(e => e.id === historyEq.id ? updatedEq : e));
       setHistoryEq(updatedEq);
@@ -638,12 +820,17 @@ export default function Dashboard({
     );
   }
 
-  const activeEquipments = equipments.filter(e => e.status === 'active');
-  const maintenanceEquipments = equipments.filter(e => e.status === 'maintenance');
+  const dailyStatus = getDailyEquipmentsStatus(dashboardDate, equipments, logs);
+  const activeEquipments = dailyStatus.requiredEqs;
+  const maintenanceEquipments = [
+    ...equipments.filter(e => e.status === 'maintenance'), 
+    ...dailyStatus.exemptEqs.filter(e => e.status !== 'maintenance')
+  ];
   
   // Calculate compliance statistics for shift
-  const checkedEqIds = new Set(logs.map(l => l.equipmentId));
-  const pendingCount = activeEquipments.filter(e => !checkedEqIds.has(e.id)).length;
+  const isEqCheckedOnDate = (e: Equipment) => 
+    logs.some(l => l.equipmentId === e.id || l.equipmentId === e.code || (l.equipmentCode && l.equipmentCode === e.code));
+  const pendingCount = activeEquipments.filter(e => !isEqCheckedOnDate(e)).length;
   const checkedCount = activeEquipments.length - pendingCount;
   const complianceRate = activeEquipments.length === 0 ? 100 : Math.round((checkedCount / activeEquipments.length) * 100);
 
@@ -655,16 +842,21 @@ export default function Dashboard({
     
     if (!matchesSearch) return false;
 
-    const eqLogsToday = logs.filter(l => l.equipmentId === eq.id);
+    const eqLogsToday = logs.filter(l => 
+      l.equipmentId === eq.id || 
+      l.equipmentId === eq.code || 
+      (l.equipmentCode && l.equipmentCode === eq.code)
+    );
     const hasLog = eqLogsToday.length > 0;
     const isFailed = eqLogsToday.some(l => l.status === 'failed' || l.status === 'needs_attention');
+    const isExemptOnDate = dailyStatus.exemptEqs.some(e => e.id === eq.id || e.code === eq.code);
     
     if (statusFilter === 'all') return true;
-    if (statusFilter === 'active') return eq.status === 'active';
-    if (statusFilter === 'maintenance') return eq.status === 'maintenance';
-    if (statusFilter === 'checked') return eq.status === 'active' && hasLog && !isFailed;
-    if (statusFilter === 'pending') return eq.status === 'active' && !hasLog;
-    if (statusFilter === 'failed') return eq.status === 'active' && isFailed;
+    if (statusFilter === 'active') return eq.status === 'active' && !isExemptOnDate;
+    if (statusFilter === 'maintenance') return eq.status === 'maintenance' || isExemptOnDate;
+    if (statusFilter === 'checked') return hasLog && !isFailed;
+    if (statusFilter === 'pending') return !hasLog && !isExemptOnDate && eq.status === 'active';
+    if (statusFilter === 'failed') return isFailed;
 
     return true;
   });
@@ -822,12 +1014,18 @@ export default function Dashboard({
          {/* Grid displaying the smart cards */}
          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 relative z-10">
             {filteredEquipments.map(eq => {
-               const eqLogsToday = logs.filter(l => l.equipmentId === eq.id);
-               const isMaint = eq.status === 'maintenance';
-                const eqItems = checkItems.filter(item => item.equipmentId === eq.id);
-                const hasIncomplete = eqLogsToday.some(l => isLogIncomplete(l, eqItems));
-                const isChecked = eqLogsToday.length > 0 && !hasIncomplete;
+               const eqLogsToday = logs.filter(l => 
+                 l.equipmentId === eq.id || 
+                 l.equipmentId === eq.code || 
+                 (l.equipmentCode && l.equipmentCode === eq.code)
+               );
+               const isExemptOnDate = dailyStatus.exemptEqs.some(e => e.id === eq.id || e.code === eq.code);
+               const isMaint = eq.status === 'maintenance' || isExemptOnDate;
+               const isChecked = eqLogsToday.length > 0;
                const hasFailed = eqLogsToday.some(l => l.status === 'failed' || l.status === 'needs_attention');
+               const eqScope = getEquipmentShiftScope(eq);
+               const isDayApplicable = eqScope !== 'NIGHT';
+               const isNightApplicable = eqScope !== 'DAY';
 
                return (
                 <div 
@@ -854,11 +1052,9 @@ export default function Dashboard({
                                ? "bg-red-50 border-red-200 text-red-600" 
                                : hasFailed
                                  ? "bg-rose-50 border-rose-200 text-rose-600"
-                                 : hasIncomplete
-                                   ? "bg-amber-50 border-amber-200 text-amber-600 font-bold"
-                                   : isChecked
-                                     ? "bg-emerald-50 border-emerald-200 text-emerald-700"
-                                     : "bg-amber-50 border-amber-200 text-amber-700"
+                                 : isChecked
+                                   ? "bg-emerald-50 border-emerald-200 text-emerald-700"
+                                   : "bg-amber-50 border-amber-200 text-amber-700"
                             )}>
                                {isMaint ? (
                                  <Wrench className="w-5 h-5 text-red-600" />
@@ -895,9 +1091,9 @@ export default function Dashboard({
                    {/* Dual Shift Monitoring - Day Shift & Night Shift */}
                    <div className="mt-4 pt-3 border-t border-slate-100 flex flex-col gap-2.5">
                       {isMaint ? (
-                        <div className="py-2.5 rounded-xl text-[11px] font-extrabold uppercase text-center bg-gradient-to-r from-red-600 to-red-500 text-white shadow-md flex items-center justify-center gap-1.5">
+                        <div className="py-2.5 px-2 rounded-xl text-[11px] font-extrabold uppercase text-center bg-gradient-to-r from-red-600 to-red-500 text-white shadow-md flex items-center justify-center gap-1.5">
                            <Wrench className="w-3.5 h-3.5" />
-                           ปิดเพื่อซ่อมบำรุง (Break Down)
+                           {isExemptOnDate && eq.status !== 'maintenance' ? 'ปิดปรับปรุงซ่อมแซมในวันดังกล่าว' : 'ปิดเพื่อซ่อมบำรุง (Break Down)'}
                         </div>
                       ) : (
                         <div className="space-y-2 w-full">
@@ -908,7 +1104,14 @@ export default function Dashboard({
                               </span>
                               
                               {(() => {
-                                 const dayLog = eqLogsToday.find(l => l.shift === 'DAY');
+                                 if (!isDayApplicable) {
+                                    return (
+                                       <span className="px-2 py-0.5 rounded bg-slate-100 text-slate-500 font-bold text-[10px] border border-slate-200">
+                                          ⚪ เฉพาะกะดึก
+                                       </span>
+                                    );
+                                 }
+                                 const dayLog = eqLogsToday.find(l => l.shift === 'DAY') || (eqLogsToday.length === 1 && !eqLogsToday.some(l => l.shift === 'NIGHT') ? eqLogsToday[0] : undefined);
                                  if (dayLog) {
                                     const isIdle = dayLog.notes?.includes('ไม่ได้ใช้งาน') || dayLog.notes?.includes('ติดทดสอบ');
                                     if (isIdle) {
@@ -947,6 +1150,13 @@ export default function Dashboard({
                               </span>
                               
                               {(() => {
+                                 if (!isNightApplicable) {
+                                    return (
+                                       <span className="px-2 py-0.5 rounded bg-slate-100 text-slate-500 font-bold text-[10px] border border-slate-200">
+                                          ⚪ เฉพาะกะเช้า
+                                       </span>
+                                    );
+                                 }
                                  const nightLog = eqLogsToday.find(l => l.shift === 'NIGHT');
                                  if (nightLog) {
                                     const isIdle = nightLog.notes?.includes('ไม่ได้ใช้งาน') || nightLog.notes?.includes('ติดทดสอบ');
@@ -1396,16 +1606,15 @@ export default function Dashboard({
          <div className="space-y-6">
             {/* NEW GRAPH DASHBOARD CONTAINER */}
             {(() => {
-               const activeEqs = equipments.filter(e => e.status === 'active');
-               const dayActiveEqs = activeEqs.filter(e => getEquipmentShiftScope(e) !== 'NIGHT');
-               const nightActiveEqs = activeEqs.filter(e => getEquipmentShiftScope(e) !== 'DAY');
+               const { requiredEqs: dayActiveEqs, exemptEqs: dayExemptEqs } = getEquipmentsStatusForDate(dashboardDate, 'DAY', equipments, logs);
+               const { requiredEqs: nightActiveEqs, exemptEqs: nightExemptEqs } = getEquipmentsStatusForDate(dashboardDate, 'NIGHT', equipments, logs);
                const dayLeader = getShiftLeaderForDate(dashboardDate, 'DAY', operators);
                const dayAssistants = getAssistantsForDate(dashboardDate, 'DAY', operators);
                const nightLeader = getShiftLeaderForDate(dashboardDate, 'NIGHT', operators);
                const nightAssistants = getAssistantsForDate(dashboardDate, 'NIGHT', operators);
 
-               const dayStatus = getShiftStatusInfo('DAY', logs, dayActiveEqs.length, timeSettings, dashboardDate);
-               const nightStatus = getShiftStatusInfo('NIGHT', logs, nightActiveEqs.length, timeSettings, dashboardDate);
+               const dayStatus = getShiftStatusInfo('DAY', logs, dayActiveEqs.length, timeSettings, dashboardDate, dayExemptEqs.length);
+               const nightStatus = getShiftStatusInfo('NIGHT', logs, nightActiveEqs.length, timeSettings, dashboardDate, nightExemptEqs.length);
 
                const now = new Date();
                const currentHour = now.getHours() + now.getMinutes() / 60;
@@ -1425,7 +1634,8 @@ export default function Dashboard({
 
                // Build deficiencies list (Strictly separated by shift scope)
                const deficiencies: any[] = [];
-               activeEqs.forEach(eq => {
+               const activeEqsOnDate = [...dayActiveEqs, ...nightActiveEqs.filter(ne => !dayActiveEqs.some(de => de.id === ne.id))];
+               activeEqsOnDate.forEach(eq => {
                  const eqScope = getEquipmentShiftScope(eq);
                  const isDayApplicable = eqScope !== 'NIGHT';
                  const isNightApplicable = eqScope !== 'DAY';
@@ -1599,11 +1809,11 @@ export default function Dashboard({
                   const dayLogsOnDate = dateLogs.filter(l => l.shift === 'DAY');
                   const nightLogsOnDate = dateLogs.filter(l => l.shift === 'NIGHT');
 
-                  const dayActiveEqs = activeEqs.filter(e => getEquipmentShiftScope(e) !== 'NIGHT');
-                  const nightActiveEqs = activeEqs.filter(e => getEquipmentShiftScope(e) !== 'DAY');
+                  const { requiredEqs: dayTargetEqs, exemptEqs: dayExemptEqs } = getEquipmentsStatusForDate(dateStr, 'DAY', equipments, dayLogsOnDate);
+                  const { requiredEqs: nightTargetEqs, exemptEqs: nightExemptEqs } = getEquipmentsStatusForDate(dateStr, 'NIGHT', equipments, nightLogsOnDate);
 
-                  const dayStatusInfo = getShiftStatusInfo('DAY', dateLogs, dayActiveEqs.length, timeSettings, dateStr);
-                  const nightStatusInfo = getShiftStatusInfo('NIGHT', dateLogs, nightActiveEqs.length, timeSettings, dateStr);
+                  const dayStatusInfo = getShiftStatusInfo('DAY', dateLogs, dayTargetEqs.length, timeSettings, dateStr, dayExemptEqs.length, dayTargetEqs);
+                  const nightStatusInfo = getShiftStatusInfo('NIGHT', dateLogs, nightTargetEqs.length, timeSettings, dateStr, nightExemptEqs.length, nightTargetEqs);
 
                   const dayLeader = getShiftLeaderForDate(dateStr, 'DAY', operators);
                   const dayAssistants = getAssistantsForDate(dateStr, 'DAY', operators);
@@ -1619,12 +1829,14 @@ export default function Dashboard({
                     ? getNightY(nightStatusInfo.latestCheckHour) 
                     : 225;
 
-                  // Machine lists for modal (Strictly filtered by shift scope)
-                  const checkedDayEqIds = new Set(dayLogsOnDate.map(l => l.equipmentId));
-                  const pendingDayEqs = dayActiveEqs.filter(e => !checkedDayEqIds.has(e.id));
+                  // Machine lists for modal (Strictly filtered by shift scope and matching both ID and Code)
+                  const pendingDayEqs = dayTargetEqs.filter(e => 
+                    !dayLogsOnDate.some(l => l.equipmentId === e.id || l.equipmentId === e.code || (l.equipmentCode && l.equipmentCode === e.code))
+                  );
 
-                  const checkedNightEqIds = new Set(nightLogsOnDate.map(l => l.equipmentId));
-                  const pendingNightEqs = nightActiveEqs.filter(e => !checkedNightEqIds.has(e.id));
+                  const pendingNightEqs = nightTargetEqs.filter(e => 
+                    !nightLogsOnDate.some(l => l.equipmentId === e.id || l.equipmentId === e.code || (l.equipmentCode && l.equipmentCode === e.code))
+                  );
 
                   // Dedicated column per day (75px each, starting at X=80)
                   const colLeft = 80 + index * 75;
@@ -1650,12 +1862,16 @@ export default function Dashboard({
                      dayPlotY,
                      dayLogsOnDate,
                      pendingDayEqs,
+                     dayTargetEqs,
+                     dayExemptEqs,
                      nightStatusInfo,
                      nightLeader,
                      nightAssistants,
                      nightPlotY,
                      nightLogsOnDate,
                      pendingNightEqs,
+                     nightTargetEqs,
+                     nightExemptEqs,
                   };
                });
 
@@ -1871,6 +2087,8 @@ export default function Dashboard({
                              const isZero = info.checkedUniqueCount === 0;
 
                              const handleClick = () => {
+                               const targetCount = isDay ? p.dayTargetEqs.length : p.nightTargetEqs.length;
+                               const exemptList = isDay ? p.dayExemptEqs : p.nightExemptEqs;
                                setPointModalData({
                                  dateStr: p.dateStr,
                                  shift: shiftType,
@@ -1880,10 +2098,11 @@ export default function Dashboard({
                                  leaderName: leader,
                                  assistants,
                                  checkedCount: info.checkedUniqueCount,
-                                 totalCount: isDay ? activeEqs.filter(e => getEquipmentShiftScope(e) !== "NIGHT").length : activeEqs.filter(e => getEquipmentShiftScope(e) !== "DAY").length,
+                                 totalCount: targetCount,
                                  latestTimeStr: info.latestCheckTimeStr,
                                  checkedLogs: isDay ? p.dayLogsOnDate : p.nightLogsOnDate,
                                  pendingEqs: isDay ? p.pendingDayEqs : p.pendingNightEqs,
+                                 exemptEqs: exemptList,
                                });
                              };
 
@@ -1944,10 +2163,10 @@ export default function Dashboard({
                                      <circle cx={p.x} cy={plotY} r={4.5} fill="#10B981" stroke="#FFFFFF" strokeWidth={1.5} className="drop-shadow-xs" />
                                    </>
                                  ) : isLateComplete ? (
-                                   // 🟡 สีเหลือง: ครบ 100% แต่นอกเวลา
+                                   // 🟠 สีส้ม: ครบ 100% แต่นอกเวลา
                                    <>
-                                     <circle cx={p.x} cy={plotY} r={7} fill="#F59E0B" fillOpacity={0.18} />
-                                     <circle cx={p.x} cy={plotY} r={4.5} fill="#F59E0B" stroke="#FFFFFF" strokeWidth={1.5} className="drop-shadow-xs" />
+                                     <circle cx={p.x} cy={plotY} r={7} fill="#F97316" fillOpacity={0.2} />
+                                     <circle cx={p.x} cy={plotY} r={4.5} fill="#F97316" stroke="#FFFFFF" strokeWidth={1.5} className="drop-shadow-xs" />
                                    </>
                                  ) : isIncomplete ? (
                                    // 🔴 สีแดง: มีการตรวจแต่ยังไม่ครบ (นิ่งตรงจุดเวลาเครื่องสุดท้าย)
@@ -1974,8 +2193,8 @@ export default function Dashboard({
                                    </g>
                                  ) : isLateComplete ? (
                                    <g>
-                                     <rect x={p.x - 28} y={plotY - 16} width={56} height={12} rx={3} fill="#FFFBEB" stroke="#F59E0B" strokeWidth={0.8} />
-                                     <text x={p.x} y={plotY - 7.5} textAnchor="middle" className="text-[7.5px] font-sans font-black fill-amber-800 select-none">
+                                     <rect x={p.x - 28} y={plotY - 16} width={56} height={12} rx={3} fill="#FFF7ED" stroke="#F97316" strokeWidth={0.8} />
+                                     <text x={p.x} y={plotY - 7.5} textAnchor="middle" className="text-[7.5px] font-sans font-black fill-orange-800 select-none">
                                        {info.latestCheckTimeStr} (100%)
                                      </text>
                                    </g>
@@ -1983,7 +2202,7 @@ export default function Dashboard({
                                    <g>
                                      <rect x={p.x - 28} y={plotY - 16} width={56} height={12} rx={3} fill="#FEF2F2" stroke="#EF4444" strokeWidth={0.8} />
                                      <text x={p.x} y={plotY - 7.5} textAnchor="middle" className="text-[7px] font-sans font-black fill-red-800 select-none">
-                                       {info.latestCheckTimeStr} ({info.checkedUniqueCount}/{isDay ? activeEqs.filter(e => getEquipmentShiftScope(e) !== "NIGHT").length : activeEqs.filter(e => getEquipmentShiftScope(e) !== "DAY").length})
+                                       {info.latestCheckTimeStr} ({info.checkedUniqueCount}/{isDay ? p.dayTargetEqs.length : p.nightTargetEqs.length})
                                      </text>
                                    </g>
                                  ) : (
@@ -2084,13 +2303,13 @@ export default function Dashboard({
                            </div>
                         </div>
 
-                        <div className="p-3.5 rounded-2xl bg-amber-50/60 border border-amber-200/80 flex items-center gap-3">
-                           <div className="w-9 h-9 rounded-xl bg-amber-500 text-white flex items-center justify-center font-black text-sm shrink-0 shadow-xs">
+                        <div className="p-3.5 rounded-2xl bg-orange-50/60 border border-orange-200/80 flex items-center gap-3">
+                           <div className="w-9 h-9 rounded-xl bg-orange-500 text-white flex items-center justify-center font-black text-sm shrink-0 shadow-xs">
                               !
                            </div>
                            <div>
-                              <p className="text-[10px] font-black text-amber-800 uppercase tracking-wider">ตรวจครบแต่ช้า</p>
-                              <p className="text-base font-black text-amber-950 font-mono">
+                              <p className="text-[10px] font-black text-orange-800 uppercase tracking-wider">ตรวจครบแต่นอกเวลา (สีส้ม)</p>
+                              <p className="text-base font-black text-orange-950 font-mono">
                                  {chartShiftView === 'DAY' ? `${dayLateCount}/10 กะ (${dayLateCount * 10}%)` :
                                   chartShiftView === 'NIGHT' ? `${nightLateCount}/10 กะ (${nightLateCount * 10}%)` :
                                   `${dayLateCount + nightLateCount}/20 กะ`}
@@ -2119,7 +2338,7 @@ export default function Dashboard({
                            <div>
                               <p className="text-[10px] font-black text-slate-500 uppercase tracking-wider">จำนวนเครื่องในระบบ</p>
                               <p className="text-base font-black text-slate-800 font-mono">
-                                 {activeEqs.length} เครื่อง
+                                 {activeEquipments.length} เครื่อง
                               </p>
                            </div>
                         </div>
@@ -2232,7 +2451,7 @@ export default function Dashboard({
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                {/* 1. DAY SHIFT KPI STATUS CARD */}
                {(() => {
-                  const dayActiveEqs = equipments.filter(e => e.status === 'active' && getEquipmentShiftScope(e) !== 'NIGHT');
+                  const { requiredEqs: dayActiveEqs, exemptEqs: dayExemptEqs } = getEquipmentsStatusForDate(dashboardDate, 'DAY', equipments, logs);
                   const dayLeader = getShiftLeaderForDate(dashboardDate, 'DAY', operators);
                   const dayAssistants = getAssistantsForDate(dashboardDate, 'DAY', operators);
                   const dayLogs = logs.filter(l => l.shift === 'DAY');
@@ -2314,13 +2533,23 @@ export default function Dashboard({
                               <span className={cn("text-base font-black font-mono", dayIncomplete > 0 ? "text-amber-600" : "text-slate-500")}>{dayIncomplete} <span className="text-[9px] font-normal">เครื่อง</span></span>
                            </div>
                         </div>
+
+                        {dayExemptEqs.length > 0 && (
+                           <div className="mt-3 p-2 bg-slate-50 rounded-xl border border-slate-200/60 flex items-center justify-between text-[11px] font-bold text-slate-600">
+                              <span className="flex items-center gap-1.5">
+                                 <span className="w-2 h-2 rounded-full bg-slate-400"></span>
+                                 ยกเว้นเครื่องปิดซ่อมบำรุง / ปลดล็อคภายหลัง:
+                              </span>
+                              <span className="font-mono font-black text-slate-800">{dayExemptEqs.length} เครื่อง (ไม่นับเป็นค้างตรวจ)</span>
+                           </div>
+                        )}
                      </div>
                   );
                })()}
 
                {/* 2. NIGHT SHIFT KPI STATUS CARD */}
                {(() => {
-                  const nightActiveEqs = equipments.filter(e => e.status === 'active' && getEquipmentShiftScope(e) !== 'DAY');
+                  const { requiredEqs: nightActiveEqs, exemptEqs: nightExemptEqs } = getEquipmentsStatusForDate(dashboardDate, 'NIGHT', equipments, logs);
                   const nightLeader = getShiftLeaderForDate(dashboardDate, 'NIGHT', operators);
                   const nightAssistants = getAssistantsForDate(dashboardDate, 'NIGHT', operators);
                   const nightLogs = logs.filter(l => l.shift === 'NIGHT');
@@ -2402,6 +2631,16 @@ export default function Dashboard({
                               <span className={cn("text-base font-black font-mono", nightIncomplete > 0 ? "text-amber-600" : "text-slate-500")}>{nightIncomplete} <span className="text-[9px] font-normal">เครื่อง</span></span>
                            </div>
                         </div>
+
+                        {nightExemptEqs.length > 0 && (
+                           <div className="mt-3 p-2 bg-slate-50 rounded-xl border border-slate-200/60 flex items-center justify-between text-[11px] font-bold text-slate-600">
+                              <span className="flex items-center gap-1.5">
+                                 <span className="w-2 h-2 rounded-full bg-slate-400"></span>
+                                 ยกเว้นเครื่องปิดซ่อมบำรุง / ปลดล็อคภายหลัง:
+                              </span>
+                              <span className="font-mono font-black text-slate-800">{nightExemptEqs.length} เครื่อง (ไม่นับเป็นค้างตรวจ)</span>
+                           </div>
+                        )}
                      </div>
                   );
                })()}
@@ -2411,9 +2650,6 @@ export default function Dashboard({
             {(() => {
                const auditReportData = (() => {
                   const range = [];
-                  const activeEqs = equipments.filter(e => e.status === 'active');
-                  const dayActiveEqs = activeEqs.filter(e => getEquipmentShiftScope(e) !== 'NIGHT');
-                  const nightActiveEqs = activeEqs.filter(e => getEquipmentShiftScope(e) !== 'DAY');
 
                   const parseTimeToHours = (timeStr: string): number => {
                      if (!timeStr) return 0;
@@ -2437,12 +2673,13 @@ export default function Dashboard({
 
                      // Day Shift
                      const dayLogsOnDate = dateLogs.filter(l => l.shift === 'DAY');
+                     const { requiredEqs: dayTargetEqs, exemptEqs: dayExemptEqs } = getEquipmentsStatusForDate(dateStr, 'DAY', equipments, dayLogsOnDate);
                      const dayCheckHours = dayLogsOnDate.map(l => {
                         const logD = new Date(l.timestamp);
                         return logD.getHours() + logD.getMinutes() / 60;
                      });
                      const dayAvgHour = dayCheckHours.length > 0 ? dayCheckHours.reduce((a, b) => a + b, 0) / dayCheckHours.length : null;
-                     const dayStatusInfo = getShiftStatusInfo('DAY', dateLogs, dayActiveEqs.length, timeSettings, dateStr);
+                     const dayStatusInfo = getShiftStatusInfo('DAY', dateLogs, dayTargetEqs.length, timeSettings, dateStr, dayExemptEqs.length);
                      const dayLeader = getShiftLeaderForDate(dateStr, 'DAY', operators);
                      const dayAssistants = getAssistantsForDate(dateStr, 'DAY', operators);
 
@@ -2480,12 +2717,13 @@ export default function Dashboard({
 
                      // Night Shift
                      const nightLogsOnDate = dateLogs.filter(l => l.shift === 'NIGHT');
+                     const { requiredEqs: nightTargetEqs, exemptEqs: nightExemptEqs } = getEquipmentsStatusForDate(dateStr, 'NIGHT', equipments, nightLogsOnDate);
                      const nightCheckHours = nightLogsOnDate.map(l => {
                         const logD = new Date(l.timestamp);
                         return logD.getHours() + logD.getMinutes() / 60;
                      });
                      const nightAvgHour = nightCheckHours.length > 0 ? nightCheckHours.reduce((a, b) => a + b, 0) / nightCheckHours.length : null;
-                     const nightStatusInfo = getShiftStatusInfo('NIGHT', dateLogs, nightActiveEqs.length, timeSettings, dateStr);
+                     const nightStatusInfo = getShiftStatusInfo('NIGHT', dateLogs, nightTargetEqs.length, timeSettings, dateStr, nightExemptEqs.length);
                      const nightLeader = getShiftLeaderForDate(dateStr, 'NIGHT', operators);
                      const nightAssistants = getAssistantsForDate(dateStr, 'NIGHT', operators);
 
@@ -2798,18 +3036,23 @@ export default function Dashboard({
                      </thead>
                      <tbody className="divide-y divide-slate-100 font-medium text-slate-800">
                         {equipments.filter(e => e.status === 'active').map(eq => {
-                           const dayLog = logs.find(l => l.equipmentId === eq.id && l.shift === 'DAY');
-                           const nightLog = logs.find(l => l.equipmentId === eq.id && l.shift === 'NIGHT');
+                           const dayLog = logs.find(l => (l.equipmentId === eq.id || l.equipmentId === eq.code || (l.equipmentCode && l.equipmentCode === eq.code)) && l.shift === 'DAY');
+                           const nightLog = logs.find(l => (l.equipmentId === eq.id || l.equipmentId === eq.code || (l.equipmentCode && l.equipmentCode === eq.code)) && l.shift === 'NIGHT');
                            const eqScope = getEquipmentShiftScope(eq);
                            const isDayApplicable = eqScope !== 'NIGHT';
                            const isNightApplicable = eqScope !== 'DAY';
+                           const isExempt = dailyStatus.exemptEqs.some(e => e.id === eq.id || e.code === eq.code);
 
                            // Day shift logs metrics
                            let dayStatusText = "⏳ ค้างตรวจ";
                            let dayStatusColor = "bg-red-50 text-red-700 border border-red-200";
                            let dayTimeStr = "-";
                            
-                           if (!isDayApplicable) {
+                           if (isExempt && !dayLog) {
+                              dayStatusText = "🛠️ ปิดซ่อม (ยกเว้น)";
+                              dayStatusColor = "bg-slate-100 text-slate-500 border border-slate-200";
+                              dayTimeStr = "- (ยกเว้นปิดซ่อม)";
+                           } else if (!isDayApplicable) {
                               dayStatusText = "⚪ ไม่ตรวจกะเช้า (กะดึกเท่านั้น)";
                               dayStatusColor = "bg-slate-100 text-slate-500 border border-slate-200";
                               dayTimeStr = "- (เฉพาะกะดึก)";
@@ -2818,16 +3061,12 @@ export default function Dashboard({
                               if (isIdle) {
                                  dayStatusText = "💤 สแตนบาย";
                                  dayStatusColor = "bg-sky-50 text-sky-700 border border-sky-200";
+                              } else if (dayLog.status === 'failed' || dayLog.status === 'needs_attention') {
+                                 dayStatusText = "❌ พบปัญหา";
+                                 dayStatusColor = "bg-rose-50 text-rose-700 border border-rose-200";
                               } else {
-                                 const eqItems = checkItems.filter(item => item.equipmentId === eq.id);
-                                 const isInc = isLogIncomplete(dayLog, eqItems);
-                                 if (isInc) {
-                                    dayStatusText = "⚠️ ตรวจไม่ครบ";
-                                    dayStatusColor = "bg-amber-50 text-amber-700 border border-amber-200";
-                                 } else {
-                                    dayStatusText = "✓ ตรวจครบ";
-                                    dayStatusColor = "bg-emerald-50 text-emerald-700 border border-emerald-200";
-                                 }
+                                 dayStatusText = "✓ ตรวจครบ";
+                                 dayStatusColor = "bg-emerald-50 text-emerald-700 border border-emerald-200";
                               }
                               dayTimeStr = format(dayLog.timestamp, 'HH:mm น.');
                               if (dayLog.isLate) {
@@ -2840,7 +3079,11 @@ export default function Dashboard({
                            let nightStatusColor = "bg-red-50 text-red-700 border border-red-200";
                            let nightTimeStr = "-";
                            
-                           if (!isNightApplicable) {
+                           if (isExempt && !nightLog) {
+                              nightStatusText = "🛠️ ปิดซ่อม (ยกเว้น)";
+                              nightStatusColor = "bg-slate-100 text-slate-500 border border-slate-200";
+                              nightTimeStr = "- (ยกเว้นปิดซ่อม)";
+                           } else if (!isNightApplicable) {
                               nightStatusText = "⚪ ไม่ตรวจกะดึก (กะเช้าเท่านั้น)";
                               nightStatusColor = "bg-slate-100 text-slate-500 border border-slate-200";
                               nightTimeStr = "- (เฉพาะกะเช้า)";
@@ -2849,16 +3092,12 @@ export default function Dashboard({
                               if (isIdle) {
                                  nightStatusText = "💤 สแตนบาย";
                                  nightStatusColor = "bg-sky-50 text-sky-700 border border-sky-200";
+                              } else if (nightLog.status === 'failed' || nightLog.status === 'needs_attention') {
+                                 nightStatusText = "❌ พบปัญหา";
+                                 nightStatusColor = "bg-rose-50 text-rose-700 border border-rose-200";
                               } else {
-                                 const eqItems = checkItems.filter(item => item.equipmentId === eq.id);
-                                 const isInc = isLogIncomplete(nightLog, eqItems);
-                                 if (isInc) {
-                                    nightStatusText = "⚠️ ตรวจไม่ครบ";
-                                    nightStatusColor = "bg-amber-50 text-amber-700 border border-amber-200";
-                                 } else {
-                                    nightStatusText = "✓ ตรวจครบ";
-                                    nightStatusColor = "bg-emerald-50 text-emerald-700 border border-emerald-200";
-                                 }
+                                 nightStatusText = "✓ ตรวจครบ";
+                                 nightStatusColor = "bg-emerald-50 text-emerald-700 border border-emerald-200";
                               }
                               nightTimeStr = format(nightLog.timestamp, 'HH:mm น.');
                               if (nightLog.isLate) {
@@ -3020,7 +3259,7 @@ export default function Dashboard({
                       className={cn(
                         "h-full rounded-full transition-all duration-500",
                         pointModalData.status === 'perfect' ? "bg-emerald-500" :
-                        pointModalData.status === 'late_complete' ? "bg-amber-500" :
+                        pointModalData.status === 'late_complete' ? "bg-orange-500" :
                         "bg-rose-500"
                       )} 
                       style={{ width: `${Math.min(100, Math.round((pointModalData.checkedCount / (pointModalData.totalCount || 1)) * 100))}%` }}
@@ -3043,7 +3282,7 @@ export default function Dashboard({
                     </h4>
                     {pointModalData.pendingEqs.length > 0 && (
                       <span className="text-[10px] font-extrabold text-rose-600 bg-rose-50 border border-rose-200 px-2 py-0.5 rounded-md">
-                        ตรวจยังไม่ครบ (ปักที่เส้นพักกลางกะ)
+                        ตรวจไม่ครบ / ค้างตรวจ
                       </span>
                     )}
                   </div>
@@ -3095,6 +3334,34 @@ export default function Dashboard({
                           )}
                         </div>
                       ))}
+                    </div>
+                  )}
+
+                  {/* Exempt / Repaired Equipments Banner */}
+                  {pointModalData.exemptEqs && pointModalData.exemptEqs.length > 0 && (
+                    <div className="mt-3.5 p-3.5 bg-amber-50/70 border border-amber-200 rounded-2xl">
+                      <div className="flex items-center gap-2 mb-1">
+                        <span className="text-sm">🔧</span>
+                        <p className="text-xs font-black text-amber-900">
+                          เครื่องที่ยกเว้น / อยู่ระหว่างปิดซ่อมในวันดังกล่าว ({pointModalData.exemptEqs.length} เครื่อง)
+                        </p>
+                      </div>
+                      <p className="text-[10px] text-amber-700 font-medium mb-2.5">
+                        ระบบไม่คิดเป็นเครื่องค้างตรวจย้อนหลัง เนื่องจากอยู่ในช่วงปิดปรับปรุงซ่อมแซม
+                      </p>
+                      <div className="space-y-1.5">
+                        {pointModalData.exemptEqs.map(eq => (
+                          <div key={eq.id} className="text-xs font-bold text-slate-800 flex items-center justify-between bg-white px-3 py-2 rounded-xl border border-amber-100 shadow-2xs">
+                            <div className="flex items-center gap-2">
+                              <span className="font-mono text-[10px] font-bold text-slate-500 bg-slate-100 px-1.5 py-0.5 rounded">{eq.code}</span>
+                              <span className="text-xs font-black text-slate-800">{eq.name}</span>
+                            </div>
+                            <span className="text-[9px] font-black px-2 py-0.5 rounded-md bg-amber-100 text-amber-800 border border-amber-200">
+                              ยกเว้นการตรวจ (ปิดซ่อม)
+                            </span>
+                          </div>
+                        ))}
+                      </div>
                     </div>
                   )}
                 </div>

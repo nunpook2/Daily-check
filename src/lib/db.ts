@@ -64,10 +64,33 @@ export function cleanObject<T>(obj: T): T {
   return obj;
 }
 
-let mockEquipments: Equipment[] = getLocalStorage('lab_equipments', [
-  { id: '1', name: 'MI 035', code: 'MI-035', location: 'Lab OTR', referenceDocNo: 'PDS-F-1035 Rev.001', status: 'active', createdAt: Date.now() },
-  { id: '2', name: 'HPLC System', code: 'HPLC-001', location: 'Analytical Lab', status: 'active', createdAt: Date.now() },
-]);
+const defaultEquipments: Equipment[] = [
+  { id: '1', name: 'MI 035', code: 'MI-035', location: 'Lab OTR', referenceDocNo: 'PDS-F-1035 Rev.001', status: 'active', applicableShift: 'ALL', createdAt: Date.now() },
+  { id: '2', name: 'HPLC System', code: 'HPLC-001', location: 'Analytical Lab', status: 'active', applicableShift: 'ALL', createdAt: Date.now() },
+  { id: '3', name: 'Gas Day', code: 'GAS-001', location: 'Lab Gas System', referenceDocNo: 'PDS-F-1040 Rev.001', status: 'active', applicableShift: 'DAY', createdAt: Date.now() },
+  { id: '4', name: 'Gas Chromatography (Night)', code: 'GAS-002', location: 'Lab Gas System', status: 'active', applicableShift: 'NIGHT', createdAt: Date.now() },
+  { id: '5', name: 'Spectrophotometer UV-Vis', code: 'UV-001', location: 'Lab OTR', status: 'active', applicableShift: 'ALL', createdAt: Date.now() },
+  { id: '6', name: 'Universal Testing Machine (UTM)', code: 'UTM-101', location: 'Mechanical Lab', status: 'active', applicableShift: 'ALL', createdAt: Date.now() },
+  { id: '7', name: 'Viscometer Brookfield', code: 'VIS-02', location: 'Rheology Lab', status: 'active', applicableShift: 'ALL', createdAt: Date.now() },
+  { id: '8', name: 'Analytical Balance Precisa', code: 'BAL-01', location: 'Lab OTR', status: 'active', applicableShift: 'ALL', createdAt: Date.now() },
+  { id: '9', name: 'Muffle Furnace 1200C', code: 'FURN-01', location: 'Thermal Lab', status: 'active', applicableShift: 'ALL', createdAt: Date.now() },
+  { id: '10', name: 'Moisture Analyzer Halogen', code: 'MOIST-01', location: 'Lab OTR', status: 'active', applicableShift: 'ALL', createdAt: Date.now() },
+  { id: '11', name: 'pH Meter Mettler Toledo', code: 'PH-01', location: 'Wet Lab', status: 'active', applicableShift: 'ALL', createdAt: Date.now() },
+  { id: '12', name: 'Refractometer Abbe', code: 'REF-01', location: 'Analytical Lab', status: 'active', applicableShift: 'ALL', createdAt: Date.now() },
+  { id: '13', name: 'Karl Fischer Titrator', code: 'KF-01', location: 'Wet Lab', status: 'active', applicableShift: 'ALL', createdAt: Date.now() },
+  { id: '14', name: 'Water Activity Meter', code: 'WA-01', location: 'Lab OTR', status: 'active', applicableShift: 'ALL', createdAt: Date.now() },
+];
+
+const getSanitizedEquipments = (): Equipment[] => {
+  const raw = getLocalStorage<Equipment[]>('lab_equipments', defaultEquipments);
+  if (!raw || raw.length < 13 || !raw.some(e => e.name.toLowerCase().includes('gas'))) {
+    setLocalStorage('lab_equipments', defaultEquipments);
+    return defaultEquipments;
+  }
+  return raw;
+};
+
+let mockEquipments: Equipment[] = getSanitizedEquipments();
 
 let mockCheckItems: CheckItem[] = getLocalStorage('lab_check_items', [
   { id: 'c1', equipmentId: '1', category: 'ตรวจสอบสภาพเครื่อง (ทำทุกวัน)', name: 'Temp Standby', criteriaText: '230 °C', type: 'boolean', expectedBoolean: true, isRequired: true, orderIndex: 1, frequency: 'daily' },
@@ -79,6 +102,8 @@ let mockCheckItems: CheckItem[] = getLocalStorage('lab_check_items', [
   { id: 'c7', equipmentId: '2', category: 'ตรวจสอบสภาพเครื่อง (ทำทุกวัน)', name: 'Mobile Phase Level', criteriaText: 'มีปริมาณเพียงพอ > 100 ml', type: 'boolean', expectedBoolean: true, isRequired: true, orderIndex: 2, frequency: 'daily' },
   { id: 'c8', equipmentId: '2', category: 'ตรวจสอบความพร้อมของเครื่องมือ (ทำก่อนทดสอบ)', name: 'Column Temperature', criteriaText: '30 - 45 °C', type: 'numeric', minValue: 30, maxValue: 45, unit: '°C', isRequired: true, orderIndex: 3, frequency: 'on-use' },
   { id: 'c9', equipmentId: '2', category: 'ตรวจสอบความพร้อมของเครื่องมือ (ทำก่อนทดสอบ)', name: 'No Leakage', criteriaText: 'ไม่มีการรั่วซึมตามข้อต่อ', type: 'boolean', expectedBoolean: true, isRequired: true, orderIndex: 4, frequency: 'on-use' },
+  { id: 'c10', equipmentId: '3', category: 'ตรวจสอบสภาพเครื่อง (ทำทุกวัน)', name: 'Gas Carrier Pressure', criteriaText: '60 - 80 psi', type: 'numeric', minValue: 60, maxValue: 80, unit: 'psi', isRequired: true, orderIndex: 1, frequency: 'daily' },
+  { id: 'c11', equipmentId: '3', category: 'ตรวจสอบสภาพเครื่อง (ทำทุกวัน)', name: 'Gas Line Leakage', criteriaText: 'ไม่มีการรั่วไหล', type: 'boolean', expectedBoolean: true, isRequired: true, orderIndex: 2, frequency: 'daily' },
 ]);
 
 const defaultThaiOperators: Operator[] = [
@@ -101,30 +126,26 @@ const defaultThaiOperators: Operator[] = [
   { id: 'a6', name: 'อนุสรณ์ จิตต์ชอบ', employeeId: 'AS-906', isActive: true, role: 'assistant', shift: 'DAY', classification: 'assistant', shiftGroup: 'C' },
 ];
 
-// Helper to generate realistic 10-day check logs covering Green, Yellow, and Incomplete Red shifts
-// Helper to generate realistic 10-day check logs covering Green, Yellow, and Incomplete Red shifts
+// Helper to generate realistic 10-day check logs covering Green, Orange, and Incomplete Red shifts matching user timeline
 const generateInitialLogs = (): CheckLog[] => {
   const logs: CheckLog[] = [];
   const now = new Date();
   const allActiveEqs = mockEquipments.filter(e => e.status !== 'maintenance');
-  const targetEqs = allActiveEqs.length > 0 ? allActiveEqs : [
-    { id: '1', name: 'MI 035' },
-    { id: '2', name: 'HPLC System' }
-  ] as Equipment[];
+  const targetEqs = allActiveEqs.length > 0 ? allActiveEqs : defaultEquipments;
 
   // Define 10-day shift outcome blueprint (d: 9 = 9 days ago, d: 0 = today)
-  // Types: 'perfect' (100% On-Time Green), 'late' (100% Late Yellow), 'incomplete' (Red <100%), 'missed' (0% Red)
+  // Types: 'perfect' (100% On-Time Green), 'late' (100% Late Orange), 'incomplete' (Red <100%), 'missed' (0% Red)
   const shiftSchedule = [
-    { d: 9, dayType: 'perfect', dayEndH: 9, dayEndM: 15, nightType: 'perfect', nightEndH: 21, nightEndM: 10, leaderD: 'สมชาย ใจดี', leaderN: 'วิชัย เจริญสุข' },
-    { d: 8, dayType: 'perfect', dayEndH: 9, dayEndM: 35, nightType: 'late', nightEndH: 22, nightEndM: 40, leaderD: 'สมพงษ์ สดใส', leaderN: 'ธีระพงษ์ รุ่งเรือง' },
-    { d: 7, dayType: 'late', dayEndH: 10, dayEndM: 45, nightType: 'perfect', nightEndH: 21, nightEndM: 20, leaderD: 'นครินทร์ มีชัย', leaderN: 'อนันต์ สุขสมบูรณ์' },
-    { d: 6, dayType: 'incomplete', dayEndH: 8, dayEndM: 40, incompleteCount: Math.max(1, targetEqs.length - 2), nightType: 'perfect', nightEndH: 21, nightEndM: 5, leaderD: 'ประสิทธิ์ มั่นคง', leaderN: 'วรพล เกียรติคุณ' },
-    { d: 5, dayType: 'perfect', dayEndH: 8, dayEndM: 50, nightType: 'late', nightEndH: 23, nightEndM: 15, leaderD: 'สมชาย ใจดี', leaderN: 'วิชัย เจริญสุข' },
-    { d: 4, dayType: 'late', dayEndH: 13, dayEndM: 10, nightType: 'incomplete', nightEndH: 21, nightEndM: 30, incompleteCount: Math.max(1, targetEqs.length - 3), leaderD: 'สมพงษ์ สดใส', leaderN: 'ธีระพงษ์ รุ่งเรือง' },
-    { d: 3, dayType: 'perfect', dayEndH: 9, dayEndM: 10, nightType: 'perfect', nightEndH: 20, nightEndM: 55, leaderD: 'นครินทร์ มีชัย', leaderN: 'อนันต์ สุขสมบูรณ์' },
-    { d: 2, dayType: 'perfect', dayEndH: 8, dayEndM: 40, nightType: 'perfect', nightEndH: 21, nightEndM: 30, leaderD: 'ประสิทธิ์ มั่นคง', leaderN: 'วรพล เกียรติคุณ' },
-    { d: 1, dayType: 'incomplete', dayEndH: 8, dayEndM: 28, incompleteCount: Math.max(1, targetEqs.length - 1), nightType: 'perfect', nightEndH: 21, nightEndM: 45, leaderD: 'สมชาย ใจดี', leaderN: 'วิชัย เจริญสุข' },
-    { d: 0, dayType: 'incomplete', dayEndH: 9, dayEndM: 18, incompleteCount: Math.max(1, Math.min(3, targetEqs.length)), nightType: 'missed', nightEndH: 20, nightEndM: 0, leaderD: 'สมพงษ์ สดใส', leaderN: 'ธีระพงษ์ รุ่งเรือง' },
+    { d: 9, dayType: 'incomplete', dayEndH: 7, dayEndM: 48, incompleteCount: 1, nightType: 'perfect', nightEndH: 21, nightEndM: 10, leaderD: 'สมชาย ใจดี', leaderN: 'วิชัย เจริญสุข' }, // 13 ต.ค.: 07:48 (1/13)
+    { d: 8, dayType: 'missed', dayEndH: 8, dayEndM: 0, nightType: 'late', nightEndH: 22, nightEndM: 40, leaderD: 'สมพงษ์ สดใส', leaderN: 'ธีระพงษ์ รุ่งเรือง' }, // 14 ต.ค.: 0% ค้าง
+    { d: 7, dayType: 'incomplete', dayEndH: 9, dayEndM: 41, incompleteCount: 12, nightType: 'perfect', nightEndH: 21, nightEndM: 20, leaderD: 'นครินทร์ มีชัย', leaderN: 'อนันต์ สุขสมบูรณ์' }, // 15 ต.ค.: 09:41 (12/13)
+    { d: 6, dayType: 'incomplete', dayEndH: 8, dayEndM: 28, incompleteCount: 11, nightType: 'perfect', nightEndH: 21, nightEndM: 5, leaderD: 'ประสิทธิ์ มั่นคง', leaderN: 'วรพล เกียรติคุณ' }, // 16 ต.ค.: 08:28 (11/13) - Gas Day missed!
+    { d: 5, dayType: 'incomplete', dayEndH: 9, dayEndM: 18, incompleteCount: 12, nightType: 'late', nightEndH: 23, nightEndM: 15, leaderD: 'สมชาย ใจดี', leaderN: 'วิชัย เจริญสุข' }, // 17 ต.ค.: 09:18 (12/13)
+    { d: 4, dayType: 'missed', dayEndH: 8, dayEndM: 0, nightType: 'incomplete', nightEndH: 21, nightEndM: 30, incompleteCount: 10, leaderD: 'สมพงษ์ สดใส', leaderN: 'ธีระพงษ์ รุ่งเรือง' }, // 18 ต.ค.: 0% ค้าง
+    { d: 3, dayType: 'incomplete', dayEndH: 8, dayEndM: 30, incompleteCount: 1, nightType: 'perfect', nightEndH: 20, nightEndM: 55, leaderD: 'นครินทร์ มีชัย', leaderN: 'อนันต์ สุขสมบูรณ์' }, // 19 ต.ค.: 08:30 (1/13)
+    { d: 2, dayType: 'incomplete', dayEndH: 20, dayEndM: 16, incompleteCount: 1, nightType: 'perfect', nightEndH: 21, nightEndM: 30, leaderD: 'ประสิทธิ์ มั่นคง', leaderN: 'วรพล เกียรติคุณ' }, // 20 ต.ค.: 20:16 (1/13)
+    { d: 1, dayType: 'incomplete', dayEndH: 23, dayEndM: 29, incompleteCount: 1, nightType: 'perfect', nightEndH: 21, nightEndM: 45, leaderD: 'สมชาย ใจดี', leaderN: 'วิชัย เจริญสุข' }, // 21 ต.ค.: 23:29 (1/13)
+    { d: 0, dayType: 'incomplete', dayEndH: 9, dayEndM: 6, incompleteCount: 11, nightType: 'missed', nightEndH: 20, nightEndM: 0, leaderD: 'สมพงษ์ สดใส', leaderN: 'ธีระพงษ์ รุ่งเรือง' }, // 22 ต.ค.: 09:06 (11/13)
   ];
 
   shiftSchedule.forEach((plan, planIdx) => {
@@ -137,9 +158,16 @@ const generateInitialLogs = (): CheckLog[] => {
 
     // Day Shift Logs
     if (plan.dayType !== 'missed') {
-      const dayEqsToLog = plan.dayType === 'incomplete' 
-        ? dayCandidates.slice(0, Math.max(1, Math.min(plan.incompleteCount || (dayCandidates.length - 1), dayCandidates.length - 1))) 
-        : dayCandidates;
+      let dayEqsToLog = dayCandidates;
+      if (plan.dayType === 'incomplete') {
+        // When plan.d === 6 (Oct 16), specifically exclude 'Gas Day' so it remains uninspected as requested by user!
+        if (plan.d === 6) {
+          const nonGasEqs = dayCandidates.filter(e => !e.name.toLowerCase().includes('gas'));
+          dayEqsToLog = nonGasEqs.slice(0, Math.min(plan.incompleteCount || 11, nonGasEqs.length));
+        } else {
+          dayEqsToLog = dayCandidates.slice(0, Math.max(1, Math.min(plan.incompleteCount || (dayCandidates.length - 1), dayCandidates.length - 1)));
+        }
+      }
       
       const count = dayEqsToLog.length;
       dayEqsToLog.forEach((eq, eqIdx) => {
@@ -220,12 +248,12 @@ const getSanitizedOperators = (): Operator[] => {
 
 // Check if existing stored logs contain outdated logs or incomplete coverage
 const getSanitizedLogs = (): CheckLog[] => {
-  const isUpToDate = getLocalStorage<string>('lab_logs_version', '') === 'v4.1';
+  const isUpToDate = getLocalStorage<string>('lab_logs_version', '') === 'v5.0';
   const raw = getLocalStorage<CheckLog[]>('lab_logs', []);
   if (!isUpToDate || !raw || raw.length < 15 || raw.some(l => l.operatorName?.includes('Sarah'))) {
     const initialLogs = generateInitialLogs();
     setLocalStorage('lab_logs', initialLogs);
-    setLocalStorage('lab_logs_version', 'v4.1');
+    setLocalStorage('lab_logs_version', 'v5.0');
     return initialLogs;
   }
   return raw;

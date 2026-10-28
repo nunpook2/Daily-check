@@ -3,6 +3,14 @@ export type CheckItemType = 'boolean' | 'numeric' | 'text' | 'boolean_and_numeri
 export type ShiftType = 'DAY' | 'NIGHT' | 'OTHER' | 'NA';
 export type ShiftScope = 'ALL' | 'DAY' | 'NIGHT';
 
+export interface MaintenanceHistoryRecord {
+  startedAt: number;
+  endedAt: number;
+  reason?: string;
+  notes?: string;
+  by?: string;
+}
+
 export interface Equipment {
   id: string;
   name: string;
@@ -15,6 +23,9 @@ export interface Equipment {
   maintenanceNotes?: string;
   maintenanceAt?: number;
   maintenanceBy?: string;
+  unlockedAt?: number;
+  lastRepairedAt?: number;
+  maintenanceHistory?: MaintenanceHistoryRecord[];
   createdAt: number;
 }
 
@@ -82,6 +93,8 @@ export interface Operator {
 export interface CheckLog {
   id: string;
   equipmentId: string;
+  equipmentCode?: string;
+  equipmentName?: string;
   timestamp: number;
   dateKey: string; // YYYY-MM-DD string for easy querying
   shift: ShiftType;

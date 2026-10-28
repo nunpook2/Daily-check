@@ -315,18 +315,37 @@ export default function PerformCheck({ onSaved, initialEqCode, selectedDept = 'a
     
     try {
       setLoading(true);
-      await updateEquipment(eq.id, {
+      const now = Date.now();
+      const pastStart = eq.maintenanceAt || (now - 7 * 86400000);
+      const existingHistory = eq.maintenanceHistory || [];
+      const newHistoryEntry = {
+        startedAt: pastStart,
+        endedAt: now,
+        reason: eq.maintenanceReason || 'ซ่อมแซมเสร็จสิ้น',
+        notes: eq.maintenanceNotes || '',
+        by: 'ผู้ตรวจหน้างาน'
+      };
+
+      const updates: Partial<Equipment> = {
         status: 'active',
         maintenanceReason: '',
         maintenanceNotes: '',
         maintenanceAt: undefined,
-        maintenanceBy: undefined
-      });
+        maintenanceBy: undefined,
+        unlockedAt: now,
+        lastRepairedAt: now,
+        maintenanceHistory: [...existingHistory, newHistoryEntry]
+      };
+
+      await updateEquipment(eq.id, updates);
       setMaintenanceEqToUnlock(null);
       setScanError('');
       alert(`✅ ปลดล็อกเครื่อง "${eq.name}" สำเร็จ! เครื่องกลับสู่สถานะพร้อมใช้งานแล้ว`);
       await loadEq();
-      const unlockedEq: Equipment = { ...eq, status: 'active', maintenanceReason: '', maintenanceNotes: '' };
+      const unlockedEq: Equipment = { 
+        ...eq, 
+        ...updates
+      };
       await handleSelect(unlockedEq);
     } catch (e) {
       alert("❌ ไม่สามารถปลดล็อกเครื่องได้ กรุณาลองใหม่อีกครั้ง");
@@ -384,6 +403,8 @@ export default function PerformCheck({ onSaved, initialEqCode, selectedDept = 'a
     try {
       await saveCheckLog({
         equipmentId: selectedEq.id,
+        equipmentCode: selectedEq.code,
+        equipmentName: selectedEq.name,
         timestamp: Date.now(),
         dateKey: format(new Date(), 'yyyy-MM-dd'),
         shift: shift,
@@ -516,6 +537,8 @@ export default function PerformCheck({ onSaved, initialEqCode, selectedDept = 'a
 
       await saveCheckLog({
         equipmentId: selectedEq.id,
+        equipmentCode: selectedEq.code,
+        equipmentName: selectedEq.name,
         timestamp: Date.now(),
         dateKey: format(new Date(), 'yyyy-MM-dd'),
         shift: shift,
