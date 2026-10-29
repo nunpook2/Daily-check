@@ -32,7 +32,8 @@ import {
   MapPin,
   RefreshCw,
   SlidersHorizontal,
-  Filter
+  Filter,
+  SwitchCamera
 } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { motion, AnimatePresence } from 'motion/react';
@@ -58,6 +59,8 @@ export default function PerformCheck({ onSaved, initialEqCode, selectedDept = 'a
   const [scanError, setScanError] = useState('');
   const [maintenanceEqToUnlock, setMaintenanceEqToUnlock] = useState<Equipment | null>(null);
   const [showCamera, setShowCamera] = useState(false);
+  const [cameraFacing, setCameraFacing] = useState<'environment' | 'user'>('environment');
+  const [isScanningActive, setIsScanningActive] = useState(false);
 
   // Video and Canvas refs for native jsQR scanner
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -188,98 +191,211 @@ export default function PerformCheck({ onSaved, initialEqCode, selectedDept = 'a
     }
   };
 
-  // Setup the webcam stream and tick function
-  useEffect(() => {
-    let stream: MediaStream | null = null;
-    let animationFrameId: number;
-
-    const startCamera = async () => {
-      try {
-        stream = await navigator.mediaDevices.getUserMedia({ 
-          video: { facingMode: "environment", width: { ideal: 640 }, height: { ideal: 640 } } 
-        });
-        if (videoRef.current) {
-          videoRef.current.srcObject = stream;
-          videoRef.current.setAttribute("playsinline", "true");
-          videoRef.current.play();
-          setScanError('');
-          requestAnimationFrame(tick);
-        }
-      } catch (err) {
-        console.error("Camera access error:", err);
-        setScanError("ไม่สามารถเข้าถึงกล้องได้ กรุณาให้สิทธิ์เข้าถึงกล้อง หรืออัปโหลดไฟล์ภาพ QR Code แทน");
-        setShowCamera(false);
-      }
-    };
-
-    const tick = () => {
-      if (videoRef.current && videoRef.current.readyState === videoRef.current.HAVE_ENOUGH_DATA) {
-        const canvas = canvasRef.current;
-        const video = videoRef.current;
-        if (canvas) {
-          const ctx = canvas.getContext("2d");
-          if (ctx) {
-            canvas.height = video.videoHeight;
-            canvas.width = video.videoWidth;
-            ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-            const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-            const code = jsQR(imageData.data, imageData.width, imageData.height, {
-              inversionAttempts: "dontInvert",
-            });
-            if (code) {
-              handleCodeDetected(code.data);
-              return;
-            }
+  // Robust Equipment Matching Engine (Supports URLs, Doc IDs, Codes, Names with/without spaces and dashes)
+  const findMatchingEquipment = (rawText: string): Equipment | undefined => {
+    if (!rawText || !rawText.trim()) return undefined;
+    
+    let target = rawText.trim();
+    try {
+      if (target.startsWith('http://') || target.startsWith('https://')) {
+        const url = new URL(target);
+        const param = url.searchParams.get('eqCode') || 
+                      url.searchParams.get('id') || 
+                      url.searchParams.get('code') || 
+                      url.searchParams.get('eq') || 
+                      url.searchParams.get('equipmentId') ||
+                      url.searchParams.get('machine');
+        if (param) {
+          target = param.trim();
+        } else {
+          const parts = url.pathname.split('/').filter(Boolean);
+          if (parts.length > 0) {
+            target = parts[parts.length - 1].trim();
           }
         }
-      }
-      if (stream) {
-        animationFrameId = requestAnimationFrame(tick);
-      }
-    };
-
-    if (showCamera) {
-      startCamera();
-    } else {
-      stopCamera();
-    }
-
-    return () => {
-      stopCamera();
-    };
-
-    function stopCamera() {
-      if (stream) {
-        stream.getTracks().forEach(track => track.stop());
-        stream = null;
-      }
-      cancelAnimationFrame(animationFrameId);
-    }
-  }, [showCamera, equipments]);
-
-  const handleCodeDetected = (detectedVal: string) => {
-    let extractedCode = detectedVal;
-    try {
-      if (detectedVal.startsWith('http://') || detectedVal.startsWith('https://')) {
-        const url = new URL(detectedVal);
-        const searchParams = new URLSearchParams(url.search);
-        extractedCode = searchParams.get('eqCode') || searchParams.get('id') || searchParams.get('code') || searchParams.get('eq') || searchParams.get('equipmentId') || detectedVal;
       }
     } catch (e) {
       // Ignore URL parse error
     }
 
-    const eq = equipments.find(e => 
-      e.id === extractedCode || 
-      e.code.toLowerCase() === extractedCode.toLowerCase() ||
-      e.id.toLowerCase() === extractedCode.toLowerCase()
-    );
+    const clean = (s: string) => (s || '').toLowerCase().replace(/[\s\-_.:/]/g, '');
+    const targetClean = clean(target);
+
+    // 1. Match by Firestore Document ID
+    let matched = equipments.find(e => e.id === target || clean(e.id) === targetClean);
+    if (matched) return matched;
+
+    // 2. Match by Equipment Code (e.g. PDS-1004, MI-035)
+    matched = equipments.find(e => clean(e.code) === targetClean);
+    if (matched) return matched;
+
+    // 3. Match by Equipment Name (e.g. MI-035, FTIR, TGA, IV, Gas Day, Gas Night)
+    matched = equipments.find(e => clean(e.name) === targetClean);
+    if (matched) return matched;
+
+    // 4. Match by Reference Document Number
+    matched = equipments.find(e => e.referenceDocNo && clean(e.referenceDocNo) === targetClean);
+    if (matched) return matched;
+
+    // 5. Flexible Substring containment for names and codes >= 3 chars
+    matched = equipments.find(e => {
+      const cCode = clean(e.code);
+      const cName = clean(e.name);
+      return (
+        (targetClean.length >= 3 && (cCode.includes(targetClean) || cName.includes(targetClean))) ||
+        (cCode.length >= 3 && targetClean.includes(cCode)) ||
+        (cName.length >= 3 && targetClean.includes(cName))
+      );
+    });
+
+    return matched;
+  };
+
+  // High Performance Webcam Stream & Scanner Loop (BarcodeDetector + jsQR Fallback)
+  useEffect(() => {
+    let stream: MediaStream | null = null;
+    let animationFrameId: number;
+    let isCancelled = false;
+
+    if (!showCamera) {
+      setIsScanningActive(false);
+      return;
+    }
+
+    const startCamera = async () => {
+      try {
+        setScanError('');
+        setIsScanningActive(true);
+
+        const constraints: MediaStreamConstraints = {
+          video: {
+            facingMode: { ideal: cameraFacing },
+            width: { ideal: 1280 },
+            height: { ideal: 720 }
+          },
+          audio: false
+        };
+
+        stream = await navigator.mediaDevices.getUserMedia(constraints);
+
+        if (isCancelled) {
+          stream.getTracks().forEach(t => t.stop());
+          return;
+        }
+
+        const video = videoRef.current;
+        if (!video) return;
+
+        video.srcObject = stream;
+        video.setAttribute("playsinline", "true");
+        video.setAttribute("webkit-playsinline", "true");
+        video.muted = true;
+
+        await video.play().catch(err => {
+          console.warn("Video play error:", err);
+        });
+
+        // Initialize Native Hardware BarcodeDetector if supported by browser
+        let barcodeDetector: any = null;
+        if (typeof window !== 'undefined' && 'BarcodeDetector' in window) {
+          try {
+            barcodeDetector = new (window as any).BarcodeDetector({ formats: ['qr_code', 'code_128', 'code_39', 'data_matrix'] });
+          } catch (e) {
+            console.warn("BarcodeDetector init:", e);
+          }
+        }
+
+        const scanCanvas = document.createElement('canvas');
+        const scanCtx = scanCanvas.getContext('2d', { willReadFrequently: true });
+
+        const scanLoop = async () => {
+          if (isCancelled || !videoRef.current) return;
+
+          const v = videoRef.current;
+          if (v && v.videoWidth > 0 && v.videoHeight > 0 && v.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) {
+            let detectedText: string | null = null;
+
+            // 1. Try Hardware BarcodeDetector first (lightning fast 5ms on modern mobile)
+            if (barcodeDetector) {
+              try {
+                const barcodes = await barcodeDetector.detect(v);
+                if (barcodes && barcodes.length > 0 && barcodes[0].rawValue) {
+                  detectedText = barcodes[0].rawValue;
+                }
+              } catch (e) {
+                // fall through to jsQR
+              }
+            }
+
+            // 2. Fallback to jsQR with dual-mode inversion
+            if (!detectedText && scanCtx) {
+              const scale = Math.min(1, 640 / Math.max(v.videoWidth, v.videoHeight));
+              const sw = Math.floor(v.videoWidth * scale);
+              const sh = Math.floor(v.videoHeight * scale);
+
+              if (scanCanvas.width !== sw || scanCanvas.height !== sh) {
+                scanCanvas.width = sw;
+                scanCanvas.height = sh;
+              }
+
+              scanCtx.drawImage(v, 0, 0, sw, sh);
+              const imageData = scanCtx.getImageData(0, 0, sw, sh);
+              const qrCode = jsQR(imageData.data, imageData.width, imageData.height, {
+                inversionAttempts: "attemptBoth",
+              });
+              if (qrCode && qrCode.data) {
+                detectedText = qrCode.data;
+              }
+            }
+
+            if (detectedText) {
+              handleCodeDetected(detectedText);
+              return; // Halt loop once successfully scanned
+            }
+          }
+
+          if (!isCancelled) {
+            animationFrameId = requestAnimationFrame(scanLoop);
+          }
+        };
+
+        requestAnimationFrame(scanLoop);
+      } catch (err: any) {
+        console.error("Camera access error:", err);
+        setScanError(
+          err.name === 'NotAllowedError' 
+            ? "กรุณากด 'อนุญาต (Allow)' ให้เบราว์เซอร์เข้าถึงกล้องถ่ายรูป หรือใช้การอัปโหลดภาพถ่าย QR แทน"
+            : "ไม่สามารถเปิดกล้องได้ กรุณาตรวจสอบสิทธิ์การใช้งานกล้อง หรือใช้การอัปโหลดภาพ / พิมพ์รหัสเครื่อง"
+        );
+        setShowCamera(false);
+        setIsScanningActive(false);
+      }
+    };
+
+    startCamera();
+
+    return () => {
+      isCancelled = true;
+      cancelAnimationFrame(animationFrameId);
+      if (stream) {
+        stream.getTracks().forEach(t => t.stop());
+      }
+      setIsScanningActive(false);
+    };
+  }, [showCamera, cameraFacing, equipments]);
+
+  const handleCodeDetected = (detectedVal: string) => {
+    if (!detectedVal) return;
+    const eq = findMatchingEquipment(detectedVal);
 
     if (eq) {
+      if (typeof navigator !== 'undefined' && navigator.vibrate) {
+        try { navigator.vibrate(100); } catch (e) {}
+      }
       setShowCamera(false);
       handleSelect(eq);
     } else {
-      setScanError(`ไม่พบรหัสเครื่องจักร "${extractedCode}" ในระบบฐานข้อมูลหลัก`);
+      setScanError(`ไม่พบรหัสเครื่องจักร "${detectedVal}" ในระบบ กรุณาตรวจสอบรหัสหรือแตะเลือกจากรายการด้านล่าง`);
     }
   };
 
@@ -291,25 +407,56 @@ export default function PerformCheck({ onSaved, initialEqCode, selectedDept = 'a
     const reader = new FileReader();
     reader.onload = (event) => {
       const img = new Image();
-      img.onload = () => {
+      img.onload = async () => {
+        // 1. Try Native BarcodeDetector first on image element
+        if (typeof window !== 'undefined' && 'BarcodeDetector' in window) {
+          try {
+            const detector = new (window as any).BarcodeDetector({ formats: ['qr_code', 'code_128', 'code_39', 'data_matrix'] });
+            const barcodes = await detector.detect(img);
+            if (barcodes && barcodes.length > 0 && barcodes[0].rawValue) {
+              handleCodeDetected(barcodes[0].rawValue);
+              return;
+            }
+          } catch (e) {
+            // fallback to jsQR
+          }
+        }
+
+        // 2. Downscale to max 1000px to ensure jsQR runs in 20ms without memory bloat
         const canvas = document.createElement('canvas');
-        const ctx = canvas.getContext('2d');
+        const ctx = canvas.getContext('2d', { willReadFrequently: true });
         if (ctx) {
-          canvas.width = img.width;
-          canvas.height = img.height;
-          ctx.drawImage(img, 0, 0);
-          const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-          const code = jsQR(imageData.data, imageData.width, imageData.height);
-          if (code) {
+          const maxDim = 1000;
+          let w = img.width;
+          let h = img.height;
+          if (w > maxDim || h > maxDim) {
+            if (w > h) {
+              h = Math.round((h * maxDim) / w);
+              w = maxDim;
+            } else {
+              w = Math.round((w * maxDim) / h);
+              h = maxDim;
+            }
+          }
+
+          canvas.width = w;
+          canvas.height = h;
+          ctx.drawImage(img, 0, 0, w, h);
+          const imageData = ctx.getImageData(0, 0, w, h);
+          const code = jsQR(imageData.data, imageData.width, imageData.height, {
+            inversionAttempts: "attemptBoth"
+          });
+          if (code && code.data) {
             handleCodeDetected(code.data);
           } else {
-            setScanError("ไม่พบรหัส QR Code ที่ถูกต้องในรูปภาพนี้ กรุณาถ่ายภาพให้ชัดเจนยิ่งขึ้น");
+            setScanError("ไม่พบรหัส QR Code ในรูปภาพนี้ กรุณาถ่ายภาพให้ใกล้และชัดเจนยิ่งขึ้น หรือแตะเลือกเครื่องจากรายการด้านล่าง");
           }
         }
       };
       img.src = event.target?.result as string;
     };
     reader.readAsDataURL(file);
+    e.target.value = ''; // Reset input to allow re-uploading same file
   };
 
   const handleManualSubmit = (e: React.FormEvent) => {
@@ -317,16 +464,13 @@ export default function PerformCheck({ onSaved, initialEqCode, selectedDept = 'a
     setScanError('');
     if (!scanCode.trim()) return;
 
-    const eq = equipments.find(e => 
-      e.code.toLowerCase() === scanCode.trim().toLowerCase() ||
-      e.id === scanCode.trim()
-    );
+    const eq = findMatchingEquipment(scanCode.trim());
 
     if (eq) {
       handleSelect(eq);
       setScanCode('');
     } else {
-      setScanError(`รหัสเครื่องมือไม่ถูกต้อง: "${scanCode}"`);
+      setScanError(`รหัสเครื่องมือไม่ถูกต้อง: "${scanCode}" กรุณาตรวจสอบหรือแตะเลือกจากรายการเครื่องประจำกะ`);
     }
   };
 
@@ -1191,22 +1335,44 @@ export default function PerformCheck({ onSaved, initialEqCode, selectedDept = 'a
                  
                  {showCamera ? (
                    <div className="w-full aspect-square max-w-[280px] bg-slate-950 rounded-[2rem] overflow-hidden shadow-2xl mb-6 relative border-4 border-slate-100 ring-1 ring-slate-200/50">
-                      <video ref={videoRef} className="w-full h-full object-cover" />
+                      <video 
+                        ref={videoRef} 
+                        autoPlay 
+                        playsInline 
+                        muted 
+                        className="w-full h-full object-cover" 
+                      />
                       <canvas ref={canvasRef} className="hidden" />
                       
+                      {/* Switch Camera Button */}
+                      <button
+                        type="button"
+                        onClick={() => setCameraFacing(prev => prev === 'environment' ? 'user' : 'environment')}
+                        className="absolute top-3 right-3 p-2 bg-black/60 hover:bg-black/80 backdrop-blur-md text-white rounded-full transition-all cursor-pointer z-20 shadow-md active:scale-95 flex items-center justify-center"
+                        title="สลับกล้องหน้า/หลัง"
+                      >
+                        <SwitchCamera className="w-4 h-4" />
+                      </button>
+
+                      {/* Scanning Live Badge */}
+                      <div className="absolute top-3 left-3 px-2.5 py-1 bg-black/60 backdrop-blur-md rounded-full flex items-center gap-1.5 z-20 shadow-md">
+                        <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping"></span>
+                        <span className="text-[10px] text-white font-bold">กำลังสแกนสด...</span>
+                      </div>
+
                       {/* Glowing Scan Bar */}
-                      <div className="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-transparent via-indigo-400 to-transparent animate-bounce shadow-[0_0_15px_rgba(79,70,229,0.8)]"></div>
+                      <div className="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-transparent via-indigo-400 to-transparent animate-bounce shadow-[0_0_15px_rgba(79,70,229,0.8)] pointer-events-none"></div>
                       
                       {/* QR corner reticles */}
-                      <div className="absolute top-4 left-4 w-8 h-8 border-t-4 border-l-4 border-indigo-400 rounded-tl-lg"></div>
-                      <div className="absolute top-4 right-4 w-8 h-8 border-t-4 border-r-4 border-indigo-400 rounded-tr-lg"></div>
-                      <div className="absolute bottom-4 left-4 w-8 h-8 border-b-4 border-l-4 border-indigo-400 rounded-bl-lg"></div>
-                      <div className="absolute bottom-4 right-4 w-8 h-8 border-b-4 border-r-4 border-indigo-400 rounded-br-lg"></div>
+                      <div className="absolute top-8 left-8 w-8 h-8 border-t-4 border-l-4 border-indigo-400 rounded-tl-lg pointer-events-none"></div>
+                      <div className="absolute top-8 right-8 w-8 h-8 border-t-4 border-r-4 border-indigo-400 rounded-tr-lg pointer-events-none"></div>
+                      <div className="absolute bottom-12 left-8 w-8 h-8 border-b-4 border-l-4 border-indigo-400 rounded-bl-lg pointer-events-none"></div>
+                      <div className="absolute bottom-12 right-8 w-8 h-8 border-b-4 border-r-4 border-indigo-400 rounded-br-lg pointer-events-none"></div>
 
                       <button 
                         type="button"
                         onClick={() => setShowCamera(false)} 
-                        className="absolute bottom-4 left-1/2 transform -translate-x-1/2 px-4 py-1.5 bg-rose-600 text-white font-bold rounded-xl shadow-lg text-[10px] hover:bg-rose-500 cursor-pointer"
+                        className="absolute bottom-3 left-1/2 transform -translate-x-1/2 px-4 py-1.5 bg-rose-600 text-white font-bold rounded-xl shadow-lg text-[10px] hover:bg-rose-500 cursor-pointer z-20 active:scale-95"
                       >
                         ปิดกล้องสแกน
                       </button>
