@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { 
   fetchEquipments, 
   fetchLogs, 
+  fetchLogsRange,
   seedDummyData,
   fetchCheckItems,
   updateCheckLog,
@@ -584,13 +585,27 @@ export default function Dashboard({
 
   const loadData = async (dateStr: string) => {
     setLoading(true);
-    let [eqData, dateLogsData, itemsData, opData, settings] = await Promise.all([
+
+    // Generate dates range for 30 days of trends ending on dateStr with timezone safety (T12:00:00)
+    const datesRange: string[] = [];
+    for (let i = 29; i >= 0; i--) {
+       const d = new Date(dateStr + 'T12:00:00');
+       d.setDate(d.getDate() - i);
+       datesRange.push(format(d, 'yyyy-MM-dd'));
+    }
+    const minDate = datesRange[0];
+    const maxDate = datesRange[datesRange.length - 1];
+
+    // Single fast batch fetch from Firestore instead of 46 concurrent requests!
+    let [eqDataRaw, allTrendLogs, itemsData, opData, settings] = await Promise.all([
       fetchEquipments(),
-      fetchLogs(dateStr),
+      fetchLogsRange(minDate, maxDate),
       fetchCheckItems(),
       fetchOperators(),
       fetchTimeWindowSettingsAsync()
     ]);
+
+    let eqData = eqDataRaw;
 
     // Filter equipments by selectedDept if not 'all'
     if (selectedDept && selectedDept !== 'all') {
@@ -614,30 +629,24 @@ export default function Dashboard({
       });
     }
     
+    // Extract today's date logs directly from allTrendLogs
+    const dateLogsData = allTrendLogs.filter(l => l.dateKey === dateStr);
+
+    // Extract the latest log per equipment directly from allTrendLogs in-memory (0ms network cost!)
     const activeEqs = eqData.filter(e => e.status === 'active');
     const latestLogsRecord: Record<string, CheckLog> = {};
-    
-    await Promise.all(activeEqs.map(async (eq) => {
-       const eqLogs = await fetchEquipmentLogs(eq.id!);
-       if (eqLogs && eqLogs.length > 0) {
-          const relevantLog = eqLogs.find(l => format(l.timestamp, 'yyyy-MM-dd') <= dateStr);
-          if (relevantLog) {
-             latestLogsRecord[eq.id!] = relevantLog;
-          }
-       }
-    }));
+    activeEqs.forEach(eq => {
+      const eqLogs = allTrendLogs.filter(l => 
+        (l.equipmentId === eq.id || l.equipmentId === eq.code || (l.equipmentCode && l.equipmentCode === eq.code)) &&
+        l.dateKey <= dateStr
+      ).sort((a, b) => b.timestamp - a.timestamp);
+      
+      if (eqLogs.length > 0) {
+        latestLogsRecord[eq.id!] = eqLogs[0];
+      }
+    });
 
-    // Generate dates range for 30 days of trends (1 month) to support both the 10-day graph and 30-day export
-    const datesRange: string[] = [];
-    for (let i = 29; i >= 0; i--) {
-       const d = new Date(dateStr);
-       d.setDate(d.getDate() - i);
-       datesRange.push(format(d, 'yyyy-MM-dd'));
-    }
-    const logsArrays = await Promise.all(datesRange.map(d => fetchLogs(d)));
-    const allTrendLogs = logsArrays.flat();
     setTrendLogs(allTrendLogs);
-
     setLatestLogsByEq(latestLogsRecord);
     setEquipments(eqData);
     setCheckItems(itemsData);
@@ -1767,7 +1776,7 @@ export default function Dashboard({
                // Generate 10-day dates range ending on dashboardDate
                const datesRange: string[] = [];
                for (let i = 9; i >= 0; i--) {
-                  const d = new Date(dashboardDate);
+                  const d = new Date(dashboardDate + 'T12:00:00');
                   d.setDate(d.getDate() - i);
                   datesRange.push(format(d, 'yyyy-MM-dd'));
                }

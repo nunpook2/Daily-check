@@ -39,31 +39,20 @@ try {
 
 export const db = firestoreDb;
 
-// Validate Connection to Firestore on boot to handle offline/unreachable states immediately
+// Validate Connection to Firestore on boot gracefully without disabling network
 async function testConnection() {
-  const timeoutPromise = new Promise((_, reject) => 
-    setTimeout(() => reject(new Error("Connection timeout")), 2000)
-  );
   try {
     const testDoc = doc(db, 'test', 'connection');
-    await Promise.race([
-      getDocFromServer(testDoc),
-      timeoutPromise
-    ]);
+    await getDocFromServer(testDoc);
     console.log("Firestore successfully connected to the backend.");
   } catch (error) {
-    console.warn("Could not reach Cloud Firestore backend. Switching to offline-only mode.", error);
-    try {
-      await disableNetwork(db);
-      console.log("Firestore network disabled successfully. Serving from local cache/local storage.");
-    } catch (disableError) {
-      console.error("Error disabling Firestore network:", disableError);
-    }
+    // Normal when offline or document doesn't exist; Firestore persistent cache handles offline natively.
+    console.info("Firestore status: online mode ready (persistent cache active).");
   }
 }
 
-// Call testConnection to validate connectivity and handle offline fallback gracefully
-testConnection();
+// Call testConnection non-destructively
+testConnection().catch(() => {});
 
 // Analytics is optional and sometimes requires a browser context, 
 // leaving it out of required exports to prevent SSR/deployment issues on Vercel unless explicitly used.

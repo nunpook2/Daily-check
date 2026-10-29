@@ -37,8 +37,8 @@ const setLocalStorage = <T,>(key: string, value: T) => {
   }
 };
 
-// Helper to ensure any asynchronous Firestore operation never hangs the UI
-export function withTimeout<T>(promise: Promise<T>, timeoutMs = 3000): Promise<T> {
+// Helper to ensure any asynchronous Firestore operation never hangs the UI (default 8s for cellular reliability)
+export function withTimeout<T>(promise: Promise<T>, timeoutMs = 8000): Promise<T> {
   return Promise.race([
     promise,
     new Promise<T>((_, reject) => 
@@ -493,13 +493,58 @@ export async function fetchEquipmentLogs(equipmentId: string): Promise<CheckLog[
   }
 }
 
+export async function fetchLogsRange(startDateKey: string, endDateKey: string): Promise<CheckLog[]> {
+  try {
+    const q = query(
+      collection(db, "logs"), 
+      where("dateKey", ">=", startDateKey),
+      where("dateKey", "<=", endDateKey)
+    );
+    const snapshot = await withTimeout(getDocs(q), 8000);
+    const list = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as CheckLog));
+    if (list.length > 0) {
+      // Merge with in-memory/local logs to ensure any offline-created log is preserved
+      const existingMap = new Map<string, CheckLog>();
+      list.forEach(l => existingMap.set(l.id || `${l.equipmentId}-${l.timestamp}`, l));
+      mockLogs.forEach(l => {
+        const key = l.id || `${l.equipmentId}-${l.timestamp}`;
+        if (!existingMap.has(key) && l.dateKey >= startDateKey && l.dateKey <= endDateKey) {
+          list.push(l);
+          existingMap.set(key, l);
+        }
+      });
+      
+      const otherLogs = mockLogs.filter(l => l.dateKey < startDateKey || l.dateKey > endDateKey);
+      mockLogs = [...otherLogs, ...list];
+      setLocalStorage('lab_logs', mockLogs);
+      
+      syncOfflinePendingLogs().catch(() => {});
+      return list;
+    }
+    return mockLogs.filter(l => l.dateKey >= startDateKey && l.dateKey <= endDateKey);
+  } catch (error) {
+    console.warn("Firestore fetchLogsRange error or timeout, serving fallback data.", error);
+    return mockLogs.filter(l => l.dateKey >= startDateKey && l.dateKey <= endDateKey);
+  }
+}
+
 export async function fetchLogs(dateKey: string): Promise<CheckLog[]> {
   try {
     const q = query(collection(db, "logs"), where("dateKey", "==", dateKey));
-    const snapshot = await withTimeout(getDocs(q), 3000);
+    const snapshot = await withTimeout(getDocs(q), 8000);
     const list = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as CheckLog));
     if (list.length > 0) {
-      // Merge unique logs
+      // Merge unique logs including any pending locally
+      const existingMap = new Map<string, CheckLog>();
+      list.forEach(l => existingMap.set(l.id || `${l.equipmentId}-${l.timestamp}`, l));
+      mockLogs.filter(l => l.dateKey === dateKey).forEach(l => {
+        const key = l.id || `${l.equipmentId}-${l.timestamp}`;
+        if (!existingMap.has(key)) {
+          list.push(l);
+          existingMap.set(key, l);
+        }
+      });
+
       const otherLogs = mockLogs.filter(l => l.dateKey !== dateKey);
       mockLogs = [...otherLogs, ...list];
       setLocalStorage('lab_logs', mockLogs);
