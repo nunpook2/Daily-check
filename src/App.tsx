@@ -3,6 +3,7 @@ import Dashboard from './components/Dashboard';
 import PerformCheck from './components/PerformCheck';
 import Settings from './components/Settings';
 import OocLogs from './components/OocLogs';
+import AiAssistant from './components/AiAssistant';
 import { 
   LayoutDashboard, 
   ClipboardCheck, 
@@ -12,13 +13,14 @@ import {
   Building2,
   Lock,
   User,
-  ChevronRight
+  ChevronRight,
+  Sparkles
 } from 'lucide-react';
 import { cn } from './lib/utils';
 import { fetchOperators } from './lib/db';
 import { Operator, calculate33ShiftGroups } from './types';
 
-type View = 'dashboard' | 'check' | 'settings' | 'ooc_logs';
+type View = 'dashboard' | 'check' | 'settings' | 'ooc_logs' | 'ai_assistant';
 
 function App() {
   const [currentView, setCurrentView] = useState<View>('dashboard');
@@ -99,6 +101,13 @@ function App() {
                 subLabel="Manager Dashboard"
              />
              <NavItem 
+                active={currentView === 'ai_assistant'} 
+                onClick={() => setCurrentView('ai_assistant')} 
+                icon={<Sparkles className="w-[18px] h-[18px] text-indigo-500 animate-pulse" />} 
+                label="AI วิเคราะห์ & สรุปผลงาน" 
+                subLabel="Executive AI & Reports"
+             />
+             <NavItem 
                 active={currentView === 'ooc_logs'} 
                 onClick={() => setCurrentView('ooc_logs')} 
                 icon={<History className="w-[18px] h-[18px]" />} 
@@ -172,9 +181,24 @@ function App() {
              </div>
         </div>
 
-        <div className="flex items-center gap-1 text-[9px] font-bold text-emerald-600 bg-emerald-50 border border-emerald-100 px-2.5 py-0.5 rounded-full">
-          <span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
-          Online
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => setCurrentView('ai_assistant')}
+            className={cn(
+              "flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold transition-all shadow-xs cursor-pointer active:scale-95",
+              currentView === 'ai_assistant'
+                ? "bg-indigo-600 text-white"
+                : "bg-indigo-50 text-indigo-700 border border-indigo-200/80 hover:bg-indigo-100"
+            )}
+          >
+            <Sparkles className="w-3.5 h-3.5 text-indigo-500 animate-spin" />
+            <span>AI สรุปงาน</span>
+          </button>
+
+          <div className="flex items-center gap-1 text-[9px] font-bold text-emerald-600 bg-emerald-50 border border-emerald-100 px-2 py-0.5 rounded-full">
+            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
+            Online
+          </div>
         </div>
       </header>
 
@@ -188,8 +212,10 @@ function App() {
                   setInitialEqCode(eqCode || '');
                   setCurrentView('check');
                 }}
+                onNavigateToAi={() => setCurrentView('ai_assistant')}
               />
             )}
+            {currentView === 'ai_assistant' && <AiAssistant />}
             {currentView === 'ooc_logs' && <OocLogs selectedDept="all" />}
             {currentView === 'check' && (
               <PerformCheck onSaved={() => setInitialEqCode(undefined)} initialEqCode={initialEqCode} selectedDept="all" />
@@ -208,16 +234,22 @@ function App() {
              label="ภาพรวม" 
           />
           <MobileNavItem 
-             active={currentView === 'ooc_logs'} 
-             onClick={() => setCurrentView('ooc_logs')} 
-             icon={<History className="w-5 h-5" />} 
-             label="ประวัติ" 
+             active={currentView === 'ai_assistant'} 
+             onClick={() => setCurrentView('ai_assistant')} 
+             icon={<Sparkles className="w-5 h-5 text-indigo-500" />} 
+             label="AI สรุปงาน" 
           />
           <MobileNavItem 
              active={currentView === 'check'} 
              onClick={() => setCurrentView('check')} 
              icon={<ClipboardCheck className="w-5 h-5" />} 
              label="สแกนตรวจ" 
+          />
+          <MobileNavItem 
+             active={currentView === 'ooc_logs'} 
+             onClick={() => setCurrentView('ooc_logs')} 
+             icon={<History className="w-5 h-5" />} 
+             label="ประวัติ" 
           />
           <MobileNavItem 
              active={currentView === 'settings'} 

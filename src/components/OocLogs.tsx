@@ -47,13 +47,14 @@ export default function OocLogs({ selectedDept = 'all' }: { selectedDept?: strin
 
   useEffect(() => {
     if (selectedEqIdFilter) {
-      fetchCheckItems(selectedEqIdFilter).then(items => {
+      const selectedEq = equipments.find(e => e.id === selectedEqIdFilter);
+      fetchCheckItems(selectedEqIdFilter, selectedEq?.code).then(items => {
         setSelectedEqItems(items);
       });
     } else {
       setSelectedEqItems([]);
     }
-  }, [selectedEqIdFilter]);
+  }, [selectedEqIdFilter, equipments]);
 
   const loadData = async (dateStr: string) => {
     setLoading(true);
@@ -84,9 +85,13 @@ export default function OocLogs({ selectedDept = 'all' }: { selectedDept?: strin
       });
     }
 
-    // Filter logs to match only filtered equipments
-    const allowedEqIds = new Set(eqData.map(e => e.id));
-    logsData = logsData.filter(l => allowedEqIds.has(l.equipmentId));
+    // Filter logs to match only filtered equipments (matching ID, Code, or Name)
+    const allowedEqIdSet = new Set(eqData.flatMap(e => [e.id, e.code, e.name]));
+    logsData = logsData.filter(l => 
+      allowedEqIdSet.has(l.equipmentId) || 
+      (l.equipmentCode && allowedEqIdSet.has(l.equipmentCode)) || 
+      (l.equipmentName && allowedEqIdSet.has(l.equipmentName))
+    );
 
     setEquipments(eqData);
     setLogs(logsData);
@@ -105,9 +110,14 @@ export default function OocLogs({ selectedDept = 'all' }: { selectedDept?: strin
 
   const handleOpenLog = async (log: CheckLog) => {
     setSelectedLog(log);
-    const eq = equipments.find(e => e.id === log.equipmentId) || null;
+    const eq = equipments.find(e => 
+      e.id === log.equipmentId || 
+      e.code === log.equipmentId || 
+      (log.equipmentCode && e.code === log.equipmentCode) ||
+      (log.equipmentName && (e.name === log.equipmentName || e.name.toLowerCase() === log.equipmentName.toLowerCase()))
+    ) || null;
     setLogEq(eq);
-    const items = await fetchCheckItems(log.equipmentId);
+    const items = await fetchCheckItems(eq ? eq.id : log.equipmentId, eq ? eq.code : undefined);
     setLogItems(items);
     setEditNotesText(log.notes || '');
     setEditStatusText(log.status);
@@ -153,6 +163,17 @@ export default function OocLogs({ selectedDept = 'all' }: { selectedDept?: strin
   const totalLogsCount = logs.length;
   const passedLogsCount = logs.filter(l => l.status === 'passed').length;
   const alertLogsCount = totalLogsCount - passedLogsCount;
+
+  // Selected equipment and its corresponding logs (matching by ID, Code, or Name)
+  const selectedEq = equipments.find(e => e.id === selectedEqIdFilter);
+  const selectedEqLogs = selectedEq
+    ? logs.filter(l => 
+        l.equipmentId === selectedEq.id || 
+        l.equipmentId === selectedEq.code || 
+        (l.equipmentCode && l.equipmentCode === selectedEq.code) ||
+        (l.equipmentName && (l.equipmentName === selectedEq.name || l.equipmentName.toLowerCase() === selectedEq.name.toLowerCase()))
+      )
+    : [];
 
   return (
     <div className="relative w-full mx-auto flex flex-col space-y-6">
@@ -219,7 +240,12 @@ export default function OocLogs({ selectedDept = 'all' }: { selectedDept?: strin
                    <p className="text-xs font-bold text-slate-400 uppercase tracking-widest px-1">รายชื่อเครื่องมือทั้งหมด ({equipments.length})</p>
                    
                    {equipments.map(eq => {
-                      const eqLogs = logs.filter(l => l.equipmentId === eq.id);
+                      const eqLogs = logs.filter(l => 
+                        l.equipmentId === eq.id || 
+                        l.equipmentId === eq.code || 
+                        (l.equipmentCode && l.equipmentCode === eq.code) ||
+                        (l.equipmentName && (l.equipmentName === eq.name || l.equipmentName.toLowerCase() === eq.name.toLowerCase()))
+                      );
                       const isSelected = selectedEqIdFilter === eq.id;
                       const isChecked = eqLogs.length > 0;
                       const hasFailures = eqLogs.some(l => l.status === 'failed' || l.status === 'needs_attention');
@@ -297,8 +323,8 @@ export default function OocLogs({ selectedDept = 'all' }: { selectedDept?: strin
 
                        {/* Logs Content Flow */}
                        <div className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-6 bg-slate-50/40 max-h-[550px] custom-scrollbar">
-                          {logs.filter(l => l.equipmentId === selectedEqIdFilter).length > 0 ? (
-                             logs.filter(l => l.equipmentId === selectedEqIdFilter).map((log, logIdx) => {
+                          {selectedEqLogs.length > 0 ? (
+                             selectedEqLogs.map((log, logIdx) => {
                                const isPassed = log.status === 'passed';
                                return (
                                    <div key={log.id} 

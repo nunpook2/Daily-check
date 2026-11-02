@@ -176,3 +176,30 @@ export function calculate33ShiftGroups(targetDate: Date | string): Shift33Result
     offNightGroup: OFF_NIGHT_33_SEQUENCE[cycleIndex],
   };
 }
+
+// ==========================================
+// SHIFT MEMORY, DIRECTIVES & AI INTELLIGENCE
+// ==========================================
+export interface ShiftNote {
+  id: string;
+  category: 'directive' | 'quality_alert' | 'handover' | 'evaluation' | 'general';
+  title: string;
+  content: string;
+  authorName: string;
+  authorRole?: string;
+  shiftGroup?: string;
+  shift?: ShiftType;
+  priority: 'low' | 'normal' | 'high' | 'urgent';
+  createdAt: number;
+  dateKey: string;
+  tags?: string[];
+}
+
+export interface AiChatMessage {
+  id: string;
+  role: 'user' | 'assistant' | 'system';
+  content: string;
+  timestamp: number;
+  reportType?: 'quality_summary' | 'shift_eval' | 'handover' | 'risk_analysis' | 'custom';
+}
+

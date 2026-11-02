@@ -14,7 +14,7 @@ import {
   getDoc
 } from "firebase/firestore";
 import { db } from "./firebase";
-import { Equipment, CheckItem, CheckLog, Operator, TimeWindowSettings, getEquipmentShiftScope } from "../types";
+import { Equipment, CheckItem, CheckLog, Operator, TimeWindowSettings, getEquipmentShiftScope, ShiftNote } from "../types";
 import { format } from "date-fns";
 
 // Mock Fallback in case of Firebase Permission issues (ensures demo always works for CEO)
@@ -348,28 +348,43 @@ export async function updateEquipment(id: string, updates: Partial<Equipment>): 
 }
 
 
-export async function fetchCheckItems(equipmentId?: string): Promise<CheckItem[]> {
+export async function fetchCheckItems(equipmentId?: string, equipmentCode?: string): Promise<CheckItem[]> {
   try {
-    let q = query(collection(db, "check_items"));
+    let list: CheckItem[] = [];
     if (equipmentId) {
-      q = query(collection(db, "check_items"), where("equipmentId", "==", equipmentId));
+      const ids = [equipmentId];
+      if (equipmentCode && equipmentCode !== equipmentId) ids.push(equipmentCode);
+      const q = ids.length === 1 
+        ? query(collection(db, "check_items"), where("equipmentId", "==", equipmentId))
+        : query(collection(db, "check_items"), where("equipmentId", "in", ids));
+      const snapshot = await withTimeout(getDocs(q), 3000);
+      list = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as CheckItem));
+    } else {
+      const q = query(collection(db, "check_items"));
+      const snapshot = await withTimeout(getDocs(q), 3000);
+      list = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as CheckItem));
     }
-    const snapshot = await withTimeout(getDocs(q), 3000);
-    const list = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as CheckItem));
+
     if (list.length > 0) {
       if (equipmentId) {
         // Merge with existing
-        mockCheckItems = mockCheckItems.filter(i => i.equipmentId !== equipmentId).concat(list);
+        mockCheckItems = mockCheckItems
+          .filter(i => i.equipmentId !== equipmentId && (!equipmentCode || i.equipmentId !== equipmentCode))
+          .concat(list);
       } else {
         mockCheckItems = list;
       }
       setLocalStorage('lab_check_items', mockCheckItems);
       return list;
     }
-    return equipmentId ? mockCheckItems.filter(i => i.equipmentId === equipmentId) : mockCheckItems;
+    return equipmentId 
+      ? mockCheckItems.filter(i => i.equipmentId === equipmentId || (equipmentCode && i.equipmentId === equipmentCode)) 
+      : mockCheckItems;
   } catch (error) {
     console.warn("Firestore fetchCheckItems access error or timeout, serving fallback data.", error);
-    return equipmentId ? mockCheckItems.filter(i => i.equipmentId === equipmentId) : mockCheckItems;
+    return equipmentId 
+      ? mockCheckItems.filter(i => i.equipmentId === equipmentId || (equipmentCode && i.equipmentId === equipmentCode)) 
+      : mockCheckItems;
   }
 }
 
@@ -480,17 +495,30 @@ export async function updateOperator(id: string, updates: Partial<Operator>): Pr
   }
 }
 
-export async function fetchEquipmentLogs(equipmentId: string): Promise<CheckLog[]> {
+export async function fetchEquipmentLogs(equipmentId: string, equipmentCode?: string): Promise<CheckLog[]> {
   try {
-    const q = query(collection(db, "logs"), where("equipmentId", "==", equipmentId));
+    const ids = [equipmentId];
+    if (equipmentCode && equipmentCode !== equipmentId) {
+      ids.push(equipmentCode);
+    }
+    const q = ids.length === 1
+      ? query(collection(db, "logs"), where("equipmentId", "==", equipmentId))
+      : query(collection(db, "logs"), where("equipmentId", "in", ids));
     const snapshot = await withTimeout(getDocs(q), 3000);
-    return snapshot.docs
+    const logs = snapshot.docs
       .map(doc => ({ id: doc.id, ...doc.data() } as CheckLog))
       .sort((a, b) => b.timestamp - a.timestamp);
+    if (logs.length > 0) return logs;
   } catch (error) {
     console.warn("Firestore fetchEquipmentLogs access error or timeout, serving fallback data.", error);
-    return mockLogs.filter(l => l.equipmentId === equipmentId).sort((a, b) => b.timestamp - a.timestamp);
   }
+  return mockLogs
+    .filter(l => 
+      l.equipmentId === equipmentId || 
+      (equipmentCode && l.equipmentId === equipmentCode) ||
+      (equipmentCode && l.equipmentCode === equipmentCode)
+    )
+    .sort((a, b) => b.timestamp - a.timestamp);
 }
 
 export async function fetchLogsRange(startDateKey: string, endDateKey: string): Promise<CheckLog[]> {
@@ -745,3 +773,83 @@ export async function saveTimeWindowSettings(settings: TimeWindowSettings): Prom
     console.error("Failed to save time_window to Firestore:", err);
   }
 }
+
+// ==========================================
+// SHIFT MEMORY & SUPERVISOR DIRECTIVES DB
+// ==========================================
+const defaultNotes: ShiftNote[] = [
+  {
+    id: 'note-default-1',
+    category: 'directive',
+    title: 'มาตรการเฝ้าระวังเครื่อง Gas Night เป็นพิเศษ',
+    content: 'เน้นย้ำทุกกะ: ให้ตรวจเช็กแรงดันและระดับก๊าซของเครื่อง Gas Night ในช่วง 19:00 - 22:00 น. อย่างเคร่งครัด พร้อมบันทึกภาพถ่ายยืนยัน',
+    authorName: 'ผู้จัดการฝ่ายคุณภาพ (QA Manager)',
+    authorRole: 'Manager',
+    priority: 'urgent',
+    createdAt: Date.now() - 86400000 * 2,
+    dateKey: format(new Date(), 'yyyy-MM-dd'),
+    tags: ['Gas Night', 'ความปลอดภัย', 'เกณฑ์เวลา']
+  },
+  {
+    id: 'note-default-2',
+    category: 'quality_alert',
+    title: 'เกณฑ์ความคลาดเคลื่อนเครื่อง MI-035',
+    content: 'หากอุณหภูมิของ MI-035 เบี่ยงเบนเกิน ±2°C จากจุด Setpoint ให้กดรายงาน OOC และแจ้งหัวหน้ากะทันที',
+    authorName: 'วิศวกรควบคุมคุณภาพ',
+    authorRole: 'QC Engineer',
+    priority: 'high',
+    createdAt: Date.now() - 86400000 * 4,
+    dateKey: format(new Date(), 'yyyy-MM-dd'),
+    tags: ['MI-035', 'OOC', 'อุณหภูมิ']
+  }
+];
+
+export async function fetchShiftNotes(): Promise<ShiftNote[]> {
+  try {
+    const colRef = collection(db, "shift_notes");
+    const snap = await withTimeout(getDocs(colRef), 3500);
+    if (!snap.empty) {
+      const notes = snap.docs.map(d => ({ ...d.data(), id: d.id } as ShiftNote));
+      notes.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+      setLocalStorage('shift_notes_cache', notes);
+      return notes;
+    }
+  } catch (e) {
+    console.warn("Could not fetch shift_notes from Firestore, fallback to cache:", e);
+  }
+  return getLocalStorage('shift_notes_cache', defaultNotes);
+}
+
+export async function saveShiftNote(note: ShiftNote): Promise<void> {
+  const localNotes = getLocalStorage<ShiftNote[]>('shift_notes_cache', defaultNotes);
+  const existingIdx = localNotes.findIndex(n => n.id === note.id);
+  let updatedNotes: ShiftNote[];
+  if (existingIdx >= 0) {
+    updatedNotes = [...localNotes];
+    updatedNotes[existingIdx] = note;
+  } else {
+    updatedNotes = [note, ...localNotes];
+  }
+  setLocalStorage('shift_notes_cache', updatedNotes);
+
+  try {
+    const docRef = doc(db, "shift_notes", note.id);
+    await withTimeout(setDoc(docRef, cleanObject(note), { merge: true }), 4000);
+  } catch (err) {
+    console.error("Failed to save shift_note to Firestore:", err);
+  }
+}
+
+export async function deleteShiftNote(id: string): Promise<void> {
+  const localNotes = getLocalStorage<ShiftNote[]>('shift_notes_cache', defaultNotes);
+  const updatedNotes = localNotes.filter(n => n.id !== id);
+  setLocalStorage('shift_notes_cache', updatedNotes);
+
+  try {
+    const docRef = doc(db, "shift_notes", id);
+    await withTimeout(deleteDoc(docRef), 4000);
+  } catch (err) {
+    console.error("Failed to delete shift_note from Firestore:", err);
+  }
+}
+

@@ -251,6 +251,21 @@ export default function PerformCheck({ onSaved, initialEqCode, selectedDept = 'a
     return matched;
   };
 
+  // React to dynamic changes in initialEqCode prop (e.g. user clicked "ตรวจเครื่องนี้" from any dashboard card or modal)
+  useEffect(() => {
+    if (initialEqCode && equipments.length > 0) {
+      const eqToSelect = findMatchingEquipment(initialEqCode);
+      if (eqToSelect) {
+        if (eqToSelect.status === 'maintenance') {
+          setMaintenanceEqToUnlock(eqToSelect);
+          setScanError(`⛔ "${eqToSelect.name}" อยู่ในสถานะ [ปิดปรับปรุงซ่อมแซม] ชั่วคราว (สาเหตุ: ${eqToSelect.maintenanceReason || 'ชำรุดเสียหาย'})`);
+          return;
+        }
+        handleSelect(eqToSelect);
+      }
+    }
+  }, [initialEqCode, equipments]);
+
   // High Performance Webcam Stream & Scanner Loop (BarcodeDetector + jsQR Fallback)
   useEffect(() => {
     let stream: MediaStream | null = null;

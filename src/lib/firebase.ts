@@ -4,11 +4,9 @@ import {
   getFirestore, 
   persistentLocalCache, 
   persistentMultipleTabManager,
-  disableNetwork,
   getDocFromServer,
   doc
 } from "firebase/firestore";
-// import { getAnalytics } from "firebase/analytics";
 
 // CEO Provided Configuration
 const firebaseConfig = {
@@ -24,36 +22,47 @@ const firebaseConfig = {
 // Initialize Firebase
 const app = initializeApp(firebaseConfig);
 
-// Initialize Cloud Firestore with robust multi-tab persistent cache
+// Initialize Cloud Firestore with robust multi-tab persistent cache and auto-detecting long-polling for iframe/proxy resilience
 let firestoreDb;
 try {
   firestoreDb = initializeFirestore(app, {
     localCache: persistentLocalCache({
       tabManager: persistentMultipleTabManager()
-    })
+    }),
+    experimentalAutoDetectLongPolling: true,
   });
 } catch (e) {
   console.warn("Firestore offline persistence cache is not supported or failed to initialize, falling back to standard memory cache.", e);
-  firestoreDb = getFirestore(app);
+  try {
+    firestoreDb = initializeFirestore(app, {
+      experimentalAutoDetectLongPolling: true
+    });
+  } catch (_) {
+    firestoreDb = getFirestore(app);
+  }
 }
 
 export const db = firestoreDb;
 
-// Validate Connection to Firestore on boot gracefully without disabling network
+// Validate Connection to Firestore on boot gracefully
 async function testConnection() {
+  if (typeof window === 'undefined' || !navigator.onLine) {
+    return;
+  }
   try {
     const testDoc = doc(db, 'test', 'connection');
-    await getDocFromServer(testDoc);
-    console.log("Firestore successfully connected to the backend.");
-  } catch (error) {
-    // Normal when offline or document doesn't exist; Firestore persistent cache handles offline natively.
-    console.info("Firestore status: online mode ready (persistent cache active).");
+    // Bound test probe to 3000ms so it never hangs or triggers unhandled unavailable errors
+    await Promise.race([
+      getDocFromServer(testDoc),
+      new Promise((_, reject) => setTimeout(() => reject(new Error('probe_timeout')), 3000))
+    ]);
+  } catch (error: any) {
+    // Normal in offline/intermittent environments; Firestore native offline cache handles requests seamlessly
+    if (error?.message === 'probe_timeout' || error?.code === 'unavailable') {
+      return;
+    }
   }
 }
 
-// Call testConnection non-destructively
+// Call testConnection safely
 testConnection().catch(() => {});
-
-// Analytics is optional and sometimes requires a browser context, 
-// leaving it out of required exports to prevent SSR/deployment issues on Vercel unless explicitly used.
-// export const analytics = typeof window !== 'undefined' ? getAnalytics(app) : null;

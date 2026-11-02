@@ -35,7 +35,8 @@ import {
   Sun,
   Moon,
   User,
-  Power
+  Power,
+  Sparkles
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Equipment, CheckLog, CheckItem, Operator, TimeWindowSettings, getEquipmentShiftScope, getCheckItemShiftScope, calculate33ShiftGroups } from '../types';
@@ -351,10 +352,12 @@ const getHourString = (fh: number): string => {
 
 export default function Dashboard({ 
   selectedDept = 'all', 
-  onNavigateToCheck 
+  onNavigateToCheck,
+  onNavigateToAi
 }: { 
   selectedDept?: string; 
   onNavigateToCheck?: (eqCode?: string) => void; 
+  onNavigateToAi?: () => void;
 }) {
   const [equipments, setEquipments] = useState<Equipment[]>([]);
   const [checkItems, setCheckItems] = useState<CheckItem[]>([]);
@@ -458,7 +461,7 @@ export default function Dashboard({
   const getShiftHistoryItems = () => {
     if (!historyEq) return [];
     
-    const eqItems = checkItems.filter(item => item.equipmentId === historyEq.id);
+    const eqItems = checkItems.filter(item => item.equipmentId === historyEq.id || item.equipmentId === historyEq.code);
     const timelineItems = [];
 
     const now = new Date();
@@ -669,7 +672,7 @@ export default function Dashboard({
     setMaintReason('');
     setMaintNotes('');
     setMaintBy('');
-    const logs = await fetchEquipmentLogs(eq.id!);
+    const logs = await fetchEquipmentLogs(eq.id!, eq.code);
     setHistoryLogs(logs);
     if (logs.length > 0) {
       setHistoryDateFilter(format(logs[0].timestamp, 'yyyy-MM-dd'));
@@ -680,9 +683,14 @@ export default function Dashboard({
 
   const handleOpenLog = async (log: CheckLog) => {
     setSelectedLog(log);
-    const eq = equipments.find(e => e.id === log.equipmentId) || null;
+    const eq = equipments.find(e => 
+      e.id === log.equipmentId || 
+      e.code === log.equipmentId || 
+      (log.equipmentCode && e.code === log.equipmentCode) ||
+      (log.equipmentName && (e.name === log.equipmentName || e.name.toLowerCase() === log.equipmentName.toLowerCase()))
+    ) || null;
     setLogEq(eq);
-    const items = await fetchCheckItems(log.equipmentId);
+    const items = await fetchCheckItems(eq ? eq.id : log.equipmentId, eq ? eq.code : undefined);
     setLogItems(items);
     setEditNotesText(log.notes || '');
     setEditStatusText(log.status);
@@ -783,8 +791,9 @@ export default function Dashboard({
     const confirmSet = window.confirm(`คุณต้องการเปลี่ยนสถานะของเครื่องนี้เป็น "ไม่ได้ใช้งาน / เครื่องติดทดสอบ" ในกะ${shift === 'DAY' ? 'กลางวัน (เช้า)' : 'กลางคืน (ดึก)'} หรือไม่? (ระบบจะออกใบบันทึกสแตนบายเพื่อให้ผ่านการตรวจโดยสมบูรณ์)`);
     if (!confirmSet) return;
     
+    const targetEq = equipments.find(e => e.id === eqId || e.code === eqId);
     // Create passing responses for all check items for this equipment
-    const eqItems = checkItems.filter(item => item.equipmentId === eqId);
+    const eqItems = checkItems.filter(item => item.equipmentId === eqId || (targetEq && item.equipmentId === targetEq.code));
     const responses = eqItems.map(item => ({
       checkItemId: item.id!,
       type: item.type,
@@ -795,7 +804,9 @@ export default function Dashboard({
     }));
 
     const newLog = {
-      equipmentId: eqId,
+      equipmentId: targetEq ? targetEq.id : eqId,
+      equipmentCode: targetEq ? targetEq.code : undefined,
+      equipmentName: targetEq ? targetEq.name : undefined,
       timestamp: Date.now(),
       dateKey: dashboardDate,
       shift: shift,
@@ -916,6 +927,16 @@ export default function Dashboard({
             <RefreshCcw className={cn("w-3.5 h-3.5", seeding && "animate-spin")} />
             {seeding ? "กำลังอัปเดต..." : "อัปเดตข้อมูลสาธิต"}
           </button>
+
+          {onNavigateToAi && (
+            <button 
+              onClick={onNavigateToAi}
+              className="px-4 py-3 bg-gradient-to-r from-indigo-600 to-indigo-700 text-white font-bold rounded-2xl text-xs hover:from-indigo-500 hover:to-indigo-600 transition-all flex items-center gap-2 shadow-sm shrink-0 cursor-pointer active:scale-95"
+            >
+              <Sparkles className="w-3.5 h-3.5 text-amber-300 animate-spin" />
+              <span>AI สรุปผลงาน & คุณภาพ</span>
+            </button>
+          )}
         </div>
       </div>
 
@@ -3317,7 +3338,7 @@ export default function Dashboard({
                               </span>
                             </div>
                             <p className="text-[10px] text-slate-500 font-medium mt-1">
-                              📍 {eq.location} · แผนก {eq.department}
+                              📍 {eq.location} · {eq.referenceDocNo ? `เอกสาร ${eq.referenceDocNo}` : (eq as any).department ? `แผนก ${(eq as any).department}` : 'ห้องปฏิบัติการ QC/Lab'}
                             </p>
                           </div>
 
@@ -3385,7 +3406,12 @@ export default function Dashboard({
                   ) : (
                     <div className="space-y-2">
                       {pointModalData.checkedLogs.map((log) => {
-                        const matchEq = equipments.find(e => e.id === log.equipmentId);
+                        const matchEq = equipments.find(e => 
+                          e.id === log.equipmentId || 
+                          e.code === log.equipmentId || 
+                          (log.equipmentCode && e.code === log.equipmentCode) ||
+                          (log.equipmentName && (e.name === log.equipmentName || e.name.toLowerCase() === log.equipmentName.toLowerCase()))
+                        );
                         return (
                           <div 
                             key={log.id}
