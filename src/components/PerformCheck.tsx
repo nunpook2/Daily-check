@@ -76,6 +76,7 @@ export default function PerformCheck({ onSaved, initialEqCode, selectedDept = 'a
     return (hr >= 8 && hr < 20) ? 'DAY' : 'NIGHT';
   });
   const [checkType, setCheckType] = useState<string>('all');
+  const [inspectionPhase, setInspectionPhase] = useState<'routine' | 'std_calibration'>('routine');
   const [notes, setNotes] = useState('');
   const [saving, setSaving] = useState(false);
   const [standbyMode, setStandbyMode] = useState<'active' | 'testing' | 'unused'>('active');
@@ -95,11 +96,14 @@ export default function PerformCheck({ onSaved, initialEqCode, selectedDept = 'a
       if (shift === 'DAY' && itemScope === 'NIGHT') return false;
       if (shift === 'NIGHT' && itemScope === 'DAY') return false;
 
+      // In STD calibration phase, all items (especially on-use/STD parameters) are active for calibration testing
+      if (inspectionPhase === 'std_calibration') return true;
+
       if (checkType === 'all') return true;
       if (checkType === 'daily' && (!item.frequency || item.frequency === 'daily')) return true;
       return item.frequency === checkType;
     });
-  }, [items, checkType, standbyMode, shift]);
+  }, [items, checkType, standbyMode, shift, inspectionPhase]);
 
   const hasOnUseItems = useMemo(() => {
     return items.some(item => item.frequency === 'on-use');
@@ -746,7 +750,9 @@ export default function PerformCheck({ onSaved, initialEqCode, selectedDept = 'a
         return false;
       };
 
-      const isCheckLate = checkIfLate(shift, Date.now());
+      const isStd = inspectionPhase === 'std_calibration';
+      // STD Test run is when the machine actually starts work, so it is strictly exempt from the shift time window check
+      const isCheckLate = isStd ? false : checkIfLate(shift, Date.now());
 
       await saveCheckLog({
         equipmentId: selectedEq.id,
@@ -755,18 +761,24 @@ export default function PerformCheck({ onSaved, initialEqCode, selectedDept = 'a
         timestamp: Date.now(),
         dateKey: format(new Date(), 'yyyy-MM-dd'),
         shift: shift,
-        checkCycle: checkType,
+        checkCycle: isStd ? 'std_calibration' : checkType,
+        checkPhase: isStd ? 'std_calibration' : 'routine_shift',
         operatorId: operatorId,
         operatorName: opName,
         status: logStatus,
-        notes: finalNotes,
+        notes: isStd ? `[ผลทดสอบ STD หน้างาน] ${finalNotes}` : finalNotes,
         actionTaken: notes || standbyNotePrefix,
         responses: finalResponses,
         skipOnUse: standbyMode !== 'active',
-        isLate: isCheckLate
+        isLate: isCheckLate,
+        isStdTest: isStd
       });
 
-      setLastSavedMessage(`🎉 บันทึกผลการตรวจสอบเครื่อง "${selectedEq.name}" (${selectedEq.code}) เรียบร้อยแล้ว!`);
+      setLastSavedMessage(
+        isStd 
+          ? `🧪 บันทึกผลการทดสอบค่ามาตรฐาน STD ของเครื่อง "${selectedEq.name}" (${selectedEq.code}) เรียบร้อยแล้ว! (ผ่านการสอบเทียบก่อนเริ่มงาน · ไม่คิดเป็นความล่าช้า)`
+          : `🎉 บันทึกผลการตรวจสอบเครื่อง "${selectedEq.name}" (${selectedEq.code}) เรียบร้อยแล้ว!`
+      );
       setSelectedEq(null);
       setResponses({});
       setNotes('');
@@ -1651,39 +1663,87 @@ export default function PerformCheck({ onSaved, initialEqCode, selectedDept = 'a
                     </div>
                   </div>
 
-                  {/* Standby / Bypass Selection buttons */}
+                  {/* Inspection Phase Selector: Routine Shift Check vs STD Calibration Run */}
                   <div className="pt-2 border-t border-slate-100">
-                    <label className="block text-xs font-black text-slate-800 uppercase tracking-wider mb-2">สถานะการใช้งานเครื่องในกะนี้ (Machine Status) *</label>
-                    <div className="grid grid-cols-2 gap-3">
+                    <label className="block text-xs font-black text-slate-800 uppercase tracking-wider mb-2">
+                      ขั้นตอนการบันทึกตรวจ (Inspection Phase) *
+                    </label>
+                    <div className="grid grid-cols-2 gap-2.5">
                       <button
                         type="button"
-                        onClick={() => setStandbyMode(prev => prev === 'testing' ? 'active' : 'testing')}
+                        onClick={() => { setInspectionPhase('routine'); setStandbyMode('active'); }}
                         className={cn(
-                          "p-4 rounded-2xl border-2 flex flex-col items-center justify-center text-center gap-1.5 transition-all cursor-pointer active:scale-95 shadow-sm",
-                          standbyMode === 'testing' 
-                            ? "bg-amber-500 border-amber-600 text-white shadow-amber-500/10" 
+                          "p-3 rounded-2xl border-2 flex flex-col items-center justify-center text-center gap-1 transition-all cursor-pointer active:scale-95 shadow-sm",
+                          inspectionPhase === 'routine'
+                            ? "bg-indigo-600 border-indigo-700 text-white shadow-indigo-500/10"
+                            : "bg-slate-50 border-slate-200 text-slate-700 hover:bg-slate-100"
+                        )}
+                      >
+                        <span className="text-xl">📋</span>
+                        <span className="text-xs font-black leading-snug">ตรวจสภาพประจำกะ</span>
+                        <span className="text-[10px] opacity-85 leading-none font-medium">Routine Readiness</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => { setInspectionPhase('std_calibration'); setStandbyMode('active'); }}
+                        className={cn(
+                          "p-3 rounded-2xl border-2 flex flex-col items-center justify-center text-center gap-1 transition-all cursor-pointer active:scale-95 shadow-sm",
+                          inspectionPhase === 'std_calibration'
+                            ? "bg-purple-600 border-purple-700 text-white shadow-purple-500/10"
                             : "bg-slate-50 border-slate-200 text-slate-700 hover:bg-slate-100"
                         )}
                       >
                         <span className="text-xl">🧪</span>
-                        <span className="text-xs font-black leading-snug">เครื่องติดคิวทดสอบอยู่</span>
-                        <span className="text-[10px] opacity-85 leading-none font-bold">Testing Queue</span>
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setStandbyMode(prev => prev === 'unused' ? 'active' : 'unused')}
-                        className={cn(
-                          "p-4 rounded-2xl border-2 flex flex-col items-center justify-center text-center gap-1.5 transition-all cursor-pointer active:scale-95 shadow-sm",
-                          standbyMode === 'unused' 
-                            ? "bg-indigo-600 border-indigo-700 text-white shadow-indigo-500/10" 
-                            : "bg-slate-50 border-slate-200 text-slate-700 hover:bg-slate-100"
-                        )}
-                      >
-                        <span className="text-xl">💤</span>
-                        <span className="text-xs font-black leading-snug">ไม่มีการใช้งานเครื่อง</span>
-                        <span className="text-[10px] opacity-85 leading-none font-bold">No Machine Usage</span>
+                        <span className="text-xs font-black leading-snug">ทดสอบค่า STD / เริ่มงาน</span>
+                        <span className="text-[10px] opacity-85 leading-none font-medium">STD Calibration (ไม่ปรับล่าช้า)</span>
                       </button>
                     </div>
+
+                    {inspectionPhase === 'std_calibration' ? (
+                      <div className="mt-3 p-3.5 bg-purple-50 border border-purple-200 rounded-2xl flex items-start gap-2.5 text-xs text-purple-900 font-bold">
+                        <span className="text-base shrink-0">✨</span>
+                        <div>
+                          <p className="font-black text-purple-950">โหมดบันทึกผลการทดสอบค่ามาตรฐาน STD (ก่อนเริ่มงานจริง)</p>
+                          <p className="text-[11px] text-purple-700 font-normal mt-0.5 leading-relaxed">
+                            การทดสอบนี้ทำเมื่อเริ่มเปิดใช้งานเครื่องและทดสอบจริง ระบบจะจัดเก็บเป็นบันทึกสอบเทียบ STD และ<b>ยกเว้นการประเมินล่าช้าอัตโนมัติ (ไม่นับเป็นสาย)</b> สามารถ export สรุปผลแยกตามวัน/เดือนได้
+                          </p>
+                        </div>
+                      </div>
+                    ) : (
+                      /* Standby / Testing queue options for routine check */
+                      <div className="mt-3">
+                        <label className="block text-[11px] font-bold text-slate-500 mb-1.5">กรณีเครื่องยังไม่เปิดใช้งานในรอบตรวจนี้:</label>
+                        <div className="grid grid-cols-2 gap-2">
+                          <button
+                            type="button"
+                            onClick={() => setStandbyMode(prev => prev === 'testing' ? 'active' : 'testing')}
+                            className={cn(
+                              "p-2.5 rounded-xl border flex items-center justify-center gap-1.5 text-xs transition-all cursor-pointer active:scale-95",
+                              standbyMode === 'testing' 
+                                ? "bg-amber-500 border-amber-600 text-white font-black" 
+                                : "bg-slate-50 border-slate-200 text-slate-700 hover:bg-slate-100 font-bold"
+                            )}
+                          >
+                            <span>🧪</span>
+                            <span>ติดคิวทดสอบ</span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setStandbyMode(prev => prev === 'unused' ? 'active' : 'unused')}
+                            className={cn(
+                              "p-2.5 rounded-xl border flex items-center justify-center gap-1.5 text-xs transition-all cursor-pointer active:scale-95",
+                              standbyMode === 'unused' 
+                                ? "bg-indigo-600 border-indigo-700 text-white font-black" 
+                                : "bg-slate-50 border-slate-200 text-slate-700 hover:bg-slate-100 font-bold"
+                            )}
+                          >
+                            <span>💤</span>
+                            <span>ไม่ได้ใช้งาน</span>
+                          </button>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 </div>
 

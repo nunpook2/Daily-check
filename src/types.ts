@@ -98,7 +98,8 @@ export interface CheckLog {
   timestamp: number;
   dateKey: string; // YYYY-MM-DD string for easy querying
   shift: ShiftType;
-  checkCycle?: string; // Type of check that was performed (e.g. daily, on-use, all)
+  checkCycle?: string; // Type of check that was performed (e.g. daily, on-use, all, std_calibration)
+  checkPhase?: 'routine_shift' | 'std_calibration' | 'on_use'; // Clear separation between routine check & actual STD run
   operatorId: string;
   operatorName: string;
   status: 'passed' | 'failed' | 'needs_attention';
@@ -107,6 +108,7 @@ export interface CheckLog {
   responses: CheckResponse[];
   isLate?: boolean;
   skipOnUse?: boolean;
+  isStdTest?: boolean; // explicitly marks STD test / calibration (exempt from late penalty)
 }
 
 export interface TimeWindowSettings {

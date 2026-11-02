@@ -14,11 +14,13 @@ import {
   Lock,
   User,
   ChevronRight,
-  Sparkles
+  Sparkles,
+  FileSpreadsheet
 } from 'lucide-react';
 import { cn } from './lib/utils';
 import { fetchOperators } from './lib/db';
 import { Operator, calculate33ShiftGroups } from './types';
+import ExcelExportModal from './components/ExcelExportModal';
 
 type View = 'dashboard' | 'check' | 'settings' | 'ooc_logs' | 'ai_assistant';
 
@@ -26,6 +28,7 @@ function App() {
   const [currentView, setCurrentView] = useState<View>('dashboard');
   const [initialEqCode, setInitialEqCode] = useState<string | undefined>();
   const [activeOperator, setActiveOperator] = useState<Operator | null>(null);
+  const [isGlobalExcelOpen, setIsGlobalExcelOpen] = useState(false);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -114,6 +117,21 @@ function App() {
                 label="ประวัติและค่าพารามิเตอร์" 
                 subLabel="Inspection History"
              />
+
+             <div className="pt-1 px-1">
+               <button
+                  type="button"
+                  onClick={() => setIsGlobalExcelOpen(true)}
+                  className="w-full px-3.5 py-2.5 rounded-xl border border-emerald-200/90 bg-emerald-50/70 hover:bg-emerald-100/90 text-emerald-800 text-xs font-bold transition-all flex items-center justify-between shadow-2xs group cursor-pointer"
+                  title="ส่งออกรายงาน Excel แยกตามวัน เดือน พร้อมชีตทดสอบค่า STD"
+               >
+                  <div className="flex items-center gap-2.5">
+                     <FileSpreadsheet className="w-4 h-4 text-emerald-600 shrink-0" />
+                     <span className="font-sans font-black text-xs">ส่งออกข้อมูล Excel</span>
+                  </div>
+                  <span className="text-[9px] bg-emerald-200/80 text-emerald-900 px-1.5 py-0.5 rounded font-mono font-bold">.xlsx</span>
+               </button>
+             </div>
 
              <div className="my-4 border-t border-slate-100 mx-2.5 pt-4">
                  <p className="text-[10px] font-extrabold text-slate-400 uppercase tracking-widest px-1">ปฏิบัติงานหน้างาน</p>
@@ -259,6 +277,12 @@ function App() {
           />
         </div>
       </nav>
+
+      {/* Global Excel Export Modal */}
+      <ExcelExportModal 
+        isOpen={isGlobalExcelOpen} 
+        onClose={() => setIsGlobalExcelOpen(false)} 
+      />
     </div>
   );
 }

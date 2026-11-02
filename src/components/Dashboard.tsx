@@ -36,11 +36,14 @@ import {
   Moon,
   User,
   Power,
-  Sparkles
+  Sparkles,
+  FileSpreadsheet
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Equipment, CheckLog, CheckItem, Operator, TimeWindowSettings, getEquipmentShiftScope, getCheckItemShiftScope, calculate33ShiftGroups } from '../types';
 import { cn } from '../lib/utils';
+import ExcelExportModal from './ExcelExportModal';
+import { isLogStdTest } from '../lib/excelExport';
 
 const getShiftLeaderForDate = (dateStr: string, shift: 'DAY' | 'NIGHT', operatorsList: Operator[]) => {
   if (!dateStr) return 'ไม่ระบุ';
@@ -385,6 +388,7 @@ export default function Dashboard({
   // Search and Filter States
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState<'all' | 'active' | 'maintenance' | 'checked' | 'pending' | 'failed'>('all');
+  const [isExcelModalOpen, setIsExcelModalOpen] = useState(false);
 
   // Log details modal state
   const [selectedLog, setSelectedLog] = useState<CheckLog | null>(null);
@@ -926,6 +930,15 @@ export default function Dashboard({
           >
             <RefreshCcw className={cn("w-3.5 h-3.5", seeding && "animate-spin")} />
             {seeding ? "กำลังอัปเดต..." : "อัปเดตข้อมูลสาธิต"}
+          </button>
+
+          <button 
+            onClick={() => setIsExcelModalOpen(true)}
+            className="px-4 py-3 bg-gradient-to-r from-emerald-600 to-teal-700 hover:from-emerald-500 hover:to-teal-600 text-white font-bold rounded-2xl text-xs transition-all flex items-center gap-2 shadow-sm shrink-0 cursor-pointer active:scale-95"
+            title="ส่งออกรายงาน Excel แยกตามวัน เดือน พร้อมชีตทดสอบค่า STD"
+          >
+            <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-200" />
+            <span>Export ข้อมูล Excel</span>
           </button>
 
           {onNavigateToAi && (
@@ -3436,12 +3449,18 @@ export default function Dashboard({
                               <span className="font-mono text-xs font-black text-slate-700 block">
                                 {format(new Date(log.timestamp), 'HH:mm น.')}
                               </span>
-                              <span className={cn(
-                                "text-[9px] font-black px-1.5 py-0.5 rounded uppercase mt-0.5 inline-block",
-                                log.status === 'passed' ? "bg-emerald-100 text-emerald-800" : "bg-rose-100 text-rose-800"
-                              )}>
-                                {log.status === 'passed' ? 'ผ่านปกติ' : 'ต้องแก้ไข'}
-                              </span>
+                              {isLogStdTest(log) ? (
+                                <span className="text-[9px] font-black px-1.5 py-0.5 rounded uppercase mt-0.5 inline-block bg-purple-100 text-purple-800 border border-purple-200">
+                                  🧪 สอบเทียบ STD
+                                </span>
+                              ) : (
+                                <span className={cn(
+                                  "text-[9px] font-black px-1.5 py-0.5 rounded uppercase mt-0.5 inline-block",
+                                  log.status === 'passed' ? "bg-emerald-100 text-emerald-800" : "bg-rose-100 text-rose-800"
+                                )}>
+                                  {log.status === 'passed' ? 'ผ่านปกติ' : 'ต้องแก้ไข'}
+                                </span>
+                              )}
                             </div>
                           </div>
                         );
@@ -3464,6 +3483,13 @@ export default function Dashboard({
           </motion.div>
         )}
       </AnimatePresence>
+
+      {/* Excel Export Modal */}
+      <ExcelExportModal 
+        isOpen={isExcelModalOpen} 
+        onClose={() => setIsExcelModalOpen(false)} 
+        defaultDate={dashboardDate} 
+      />
     </div>
   );
 }
