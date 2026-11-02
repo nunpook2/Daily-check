@@ -38,6 +38,7 @@ import {
 import { cn } from '../lib/utils';
 import { motion, AnimatePresence } from 'motion/react';
 import jsQR from "jsqr";
+import { isLogStdTest } from '../lib/excelExport';
 
 export default function PerformCheck({ onSaved, initialEqCode, selectedDept = 'all' }: { onSaved?: () => void, initialEqCode?: string, selectedDept?: string }) {
   const [equipments, setEquipments] = useState<Equipment[]>([]);
@@ -87,22 +88,38 @@ export default function PerformCheck({ onSaved, initialEqCode, selectedDept = 'a
   }, [items]);
 
   const filteredItems = useMemo(() => {
-    const shouldSkipOnUse = standbyMode === 'testing' || standbyMode === 'unused';
-    return items.filter(item => {
-      if (shouldSkipOnUse && item.frequency === 'on-use') return false;
-      
-      // Filter out items designated exclusively for the other shift
+    const shiftItems = items.filter(item => {
       const itemScope = getCheckItemShiftScope(item);
       if (shift === 'DAY' && itemScope === 'NIGHT') return false;
       if (shift === 'NIGHT' && itemScope === 'DAY') return false;
-
-      // In STD calibration phase, all items (especially on-use/STD parameters) are active for calibration testing
-      if (inspectionPhase === 'std_calibration') return true;
-
-      if (checkType === 'all') return true;
-      if (checkType === 'daily' && (!item.frequency || item.frequency === 'daily')) return true;
-      return item.frequency === checkType;
+      return true;
     });
+
+    if (inspectionPhase === 'std_calibration') {
+      // In Pre-Test STD mode, focus on STD / on-use items if the machine has them; otherwise show all shift items
+      const stdOrOnUseItems = shiftItems.filter(item => 
+        item.frequency === 'on-use' || 
+        item.name.toLowerCase().includes('std') || 
+        (item.category || '').includes('ก่อน')
+      );
+      return stdOrOnUseItems.length > 0 ? stdOrOnUseItems : shiftItems;
+    }
+
+    // In Routine Daily Check mode:
+    const shouldSkipOnUse = standbyMode === 'testing' || standbyMode === 'unused';
+    if (shouldSkipOnUse) {
+      return shiftItems.filter(item => item.frequency !== 'on-use');
+    }
+
+    // Separate Daily Check items from Pre-Test On-Use/STD items if the machine has daily items
+    const dailyOnlyItems = shiftItems.filter(item => !item.frequency || item.frequency === 'daily' || item.frequency === 'per-shift');
+    if (checkType === 'all' && dailyOnlyItems.length > 0 && dailyOnlyItems.length < shiftItems.length) {
+      return dailyOnlyItems;
+    }
+
+    if (checkType === 'all') return shiftItems;
+    if (checkType === 'daily') return dailyOnlyItems.length > 0 ? dailyOnlyItems : shiftItems;
+    return shiftItems.filter(item => item.frequency === checkType);
   }, [items, checkType, standbyMode, shift, inspectionPhase]);
 
   const hasOnUseItems = useMemo(() => {
@@ -112,19 +129,30 @@ export default function PerformCheck({ onSaved, initialEqCode, selectedDept = 'a
   const shiftEquipmentsStatus = useMemo(() => {
     const todayStr = format(new Date(), 'yyyy-MM-dd');
     const { requiredEqs, exemptEqs } = getEquipmentsStatusForDate(todayStr, shift, equipments, todayLogs);
-    const shiftLogs = todayLogs.filter(l => l.shift === shift);
+    // Sort ascending by timestamp so earliest log is always the morning/night Daily Check
+    const shiftLogs = todayLogs
+      .filter(l => l.shift === shift)
+      .sort((a, b) => a.timestamp - b.timestamp);
 
-    const checkedList: { eq: Equipment; log: CheckLog }[] = [];
+    const checkedList: { eq: Equipment; log: CheckLog; stdLogs: CheckLog[] }[] = [];
     const pendingList: Equipment[] = [];
+    const stdRecordedList: { eq: Equipment; stdLogs: CheckLog[]; dailyLog?: CheckLog }[] = [];
 
     requiredEqs.forEach(eq => {
-      const log = shiftLogs.find(l => 
+      const eqLogs = shiftLogs.filter(l => 
         l.equipmentId === eq.id || 
         l.equipmentId === eq.code || 
         (l.equipmentCode && l.equipmentCode === eq.code)
       );
-      if (log) {
-        checkedList.push({ eq, log });
+      const dailyLog = eqLogs.find(l => !isLogStdTest(l, shiftLogs)) || eqLogs[0];
+      const stdLogs = eqLogs.filter(l => isLogStdTest(l, shiftLogs));
+
+      if (stdLogs.length > 0) {
+        stdRecordedList.push({ eq, stdLogs, dailyLog });
+      }
+
+      if (dailyLog) {
+        checkedList.push({ eq, log: dailyLog, stdLogs });
       } else {
         pendingList.push(eq);
       }
@@ -135,6 +163,7 @@ export default function PerformCheck({ onSaved, initialEqCode, selectedDept = 'a
       exemptEqs,
       checkedList,
       pendingList,
+      stdRecordedList,
       progressPercent: requiredEqs.length > 0 ? Math.round((checkedList.length / requiredEqs.length) * 100) : 0
     };
   }, [equipments, todayLogs, shift]);
@@ -493,7 +522,7 @@ export default function PerformCheck({ onSaved, initialEqCode, selectedDept = 'a
     }
   };
 
-  const handleSelect = async (eq: Equipment) => {
+  const handleSelect = async (eq: Equipment, modeOverride?: 'routine' | 'std_calibration') => {
     if (eq.status === 'maintenance') {
       setMaintenanceEqToUnlock(eq);
       setScanError(`⛔ "${eq.name}" อยู่ในสถานะ [ปิดปรับปรุงซ่อมแซม] ชั่วคราว (สาเหตุ: ${eq.maintenanceReason || 'ชำรุดเสียหาย'}) ถูกบล็อกการสแกนจนกว่าทีมช่างจะซ่อมเสร็จ`);
@@ -501,8 +530,11 @@ export default function PerformCheck({ onSaved, initialEqCode, selectedDept = 'a
     }
     setMaintenanceEqToUnlock(null);
     setScanError('');
+    if (modeOverride) {
+      setInspectionPhase(modeOverride);
+    }
     try {
-      const itms = await fetchCheckItems(eq.id);
+      const itms = await fetchCheckItems(eq.id, eq.code);
       setItems(itms);
       setSelectedEq(eq);
       setResponses({});
@@ -671,26 +703,7 @@ export default function PerformCheck({ onSaved, initialEqCode, selectedDept = 'a
         return;
       }
       let allNormal = true;
-      const applicableItems = items.filter(item => {
-        const itemScope = getCheckItemShiftScope(item);
-        if (shift === 'DAY' && itemScope === 'NIGHT') return false;
-        if (shift === 'NIGHT' && itemScope === 'DAY') return false;
-        return true;
-      });
-      const finalResponses: CheckResponse[] = applicableItems.map(item => {
-         const shouldSkipOnUse = standbyMode === 'testing' || standbyMode === 'unused';
-         const isFilteredOut = shouldSkipOnUse && item.frequency === 'on-use';
-         if (isFilteredOut) {
-            return {
-               checkItemId: item.id!,
-               type: item.type,
-               itemName: item.name,
-               isNormal: true,
-               valueBoolean: item.type === 'boolean' ? true : undefined,
-               valueNumeric: item.type === 'numeric' ? (item.minValue ?? 0) : undefined,
-            };
-         }
-
+      const finalResponses: CheckResponse[] = filteredItems.map(item => {
          const val = responses[item.id!];
          const normal = evalIsNormal(item, val);
          if (!normal) allNormal = false;
@@ -859,13 +872,88 @@ export default function PerformCheck({ onSaved, initialEqCode, selectedDept = 'a
                </div>
              )}
 
+             {/* TOP SYSTEM SELECTOR: Separate Daily Check vs Pre-Test STD Calibration */}
+             <div className="bg-slate-900 rounded-3xl p-4 sm:p-5 text-white shadow-lg border border-slate-800 space-y-3">
+               <div className="flex items-center justify-between gap-2">
+                 <div>
+                   <span className="text-[10px] font-mono uppercase tracking-widest text-indigo-300 font-bold block">
+                     Dual-Mode Inspection System (แยกข้อมูลไม่ให้ทับกัน)
+                   </span>
+                   <h3 className="text-sm sm:text-base font-black text-white mt-0.5">
+                     เลือกระบบการบันทึกข้อมูลที่ต้องการทำรายการ:
+                   </h3>
+                 </div>
+                 <span className={cn(
+                   "px-2.5 py-1 rounded-full text-[10px] font-black shrink-0",
+                   inspectionPhase === 'std_calibration'
+                     ? "bg-purple-500 text-white"
+                     : "bg-indigo-500 text-white"
+                 )}>
+                   {inspectionPhase === 'std_calibration' ? '🧪 โหมดบันทึก STD' : '📅 โหมด Daily Check'}
+                 </span>
+               </div>
+
+               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                 <button
+                   type="button"
+                   onClick={() => {
+                     setInspectionPhase('routine');
+                     setChecklistFilter('pending');
+                   }}
+                   className={cn(
+                     "p-3.5 rounded-2xl border-2 text-left transition-all cursor-pointer flex items-start gap-3",
+                     inspectionPhase === 'routine'
+                       ? "bg-indigo-600 border-indigo-400 text-white shadow-md ring-2 ring-indigo-400/30"
+                       : "bg-slate-800/90 border-slate-700 text-slate-300 hover:bg-slate-800"
+                   )}
+                 >
+                   <span className="text-2xl shrink-0">📅</span>
+                   <div className="min-w-0">
+                     <p className="text-xs sm:text-sm font-black leading-tight">
+                       1. ตรวจ Daily Check ประจำกะ
+                     </p>
+                     <p className={cn("text-[10px] mt-1 leading-relaxed", inspectionPhase === 'routine' ? "text-indigo-100" : "text-slate-400")}>
+                       เดินตรวจสภาพเครื่องช่วงเช้า (08:00-10:00) และกะดึก (20:00-22:00) กรณีเครื่องว่างหรือติดคิวทดสอบ
+                     </p>
+                   </div>
+                 </button>
+
+                 <button
+                   type="button"
+                   onClick={() => {
+                     setInspectionPhase('std_calibration');
+                     setChecklistFilter('all');
+                   }}
+                   className={cn(
+                     "p-3.5 rounded-2xl border-2 text-left transition-all cursor-pointer flex items-start gap-3",
+                     inspectionPhase === 'std_calibration'
+                       ? "bg-purple-600 border-purple-400 text-white shadow-md ring-2 ring-purple-400/30"
+                       : "bg-slate-800/90 border-slate-700 text-slate-300 hover:bg-slate-800"
+                   )}
+                 >
+                   <span className="text-2xl shrink-0">🧪</span>
+                   <div className="min-w-0">
+                     <p className="text-xs sm:text-sm font-black leading-tight">
+                       2. บันทึกผล STD ก่อนทดสอบ
+                     </p>
+                     <p className={cn("text-[10px] mt-1 leading-relaxed", inspectionPhase === 'std_calibration' ? "text-purple-100" : "text-slate-400")}>
+                       ลงค่า STD เมื่อมีงานทดสอบจริง (เช่น หลัง 10:00 น. เครื่อง MI-035, X-ray) <b>แยกไม่ทับ Daily Check และไม่คิดเป็นตรวจช้า</b>
+                     </p>
+                   </div>
+                 </button>
+               </div>
+             </div>
+
              {/* Interactive Shift Overview Widget */}
-             <div className="bg-white rounded-3xl border border-slate-200/80 shadow-md p-4 sm:p-5 space-y-4 relative overflow-hidden">
+             <div className={cn(
+               "bg-white rounded-3xl border shadow-md p-4 sm:p-5 space-y-4 relative overflow-hidden",
+               inspectionPhase === 'std_calibration' ? "border-purple-200" : "border-slate-200/80"
+             )}>
                <div className="absolute top-0 right-0 w-40 h-40 bg-indigo-50/50 rounded-full blur-3xl pointer-events-none"></div>
 
                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 relative z-10">
                  <div>
-                   <div className="flex items-center gap-2">
+                   <div className="flex items-center gap-2 flex-wrap">
                      <span className={cn(
                        "px-2.5 py-1 rounded-full text-[11px] font-black flex items-center gap-1.5 shadow-2xs",
                        shift === 'DAY' ? "bg-amber-50 text-amber-800 border border-amber-200" : "bg-indigo-50 text-indigo-800 border border-indigo-200"
@@ -878,7 +966,9 @@ export default function PerformCheck({ onSaved, initialEqCode, selectedDept = 'a
                      </span>
                    </div>
                    <h2 className="text-lg sm:text-xl font-black text-slate-900 mt-1 tracking-tight">
-                     สถานะการตรวจเช็กประจำกะ
+                     {inspectionPhase === 'std_calibration'
+                       ? '🧪 ระบบบันทึกผลค่ามาตรฐาน STD ก่อนเริ่มทดสอบจริง'
+                       : '📅 สถานะการตรวจ Daily Check ประจำกะ'}
                    </h2>
                  </div>
 
@@ -913,10 +1003,10 @@ export default function PerformCheck({ onSaved, initialEqCode, selectedDept = 'a
                <div className="relative z-10">
                  <div className="flex justify-between text-xs font-black text-slate-700 mb-1.5">
                    <span className="flex items-center gap-1.5">
-                     <span>ความคืบหน้ารวม</span>
+                     <span>ความคืบหน้าตรวจ Daily Check</span>
                      {shiftEquipmentsStatus.pendingList.length === 0 && shiftEquipmentsStatus.requiredEqs.length > 0 && (
                        <span className="text-emerald-600 font-extrabold flex items-center gap-1">
-                         <Sparkles className="w-3 h-3 text-emerald-500" /> ตรวจครบ 100% แล้ว!
+                         <Sparkles className="w-3 h-3 text-emerald-500" /> ตรวจ Daily ครบ 100% แล้ว!
                        </span>
                      )}
                    </span>
@@ -937,8 +1027,8 @@ export default function PerformCheck({ onSaved, initialEqCode, selectedDept = 'a
                  </div>
                </div>
 
-               {/* Three Interactive Metric Filter Cards */}
-               <div className="grid grid-cols-3 gap-2 pt-1 relative z-10">
+               {/* Four Interactive Metric Filter Cards */}
+               <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-1 relative z-10">
                  <button
                    type="button"
                    onClick={() => { setHubTab('checklist'); setChecklistFilter('pending'); }}
@@ -951,12 +1041,12 @@ export default function PerformCheck({ onSaved, initialEqCode, selectedDept = 'a
                  >
                    <div className="flex items-center gap-1.5 text-rose-600 font-black text-[10px] uppercase">
                      <span className="w-2 h-2 rounded-full bg-rose-500 animate-pulse"></span>
-                     ค้างตรวจ
+                     ค้าง Daily Check
                    </div>
                    <p className="text-lg sm:text-xl font-black text-slate-900 mt-1 font-mono">
                      {shiftEquipmentsStatus.pendingList.length}
                    </p>
-                   <p className="text-[10px] text-slate-500 truncate font-semibold">ต้องรีบดำเนินการ</p>
+                   <p className="text-[10px] text-slate-500 truncate font-semibold">รอเดินตรวจประจำกะ</p>
                  </button>
 
                  <button
@@ -971,12 +1061,32 @@ export default function PerformCheck({ onSaved, initialEqCode, selectedDept = 'a
                  >
                    <div className="flex items-center gap-1.5 text-emerald-600 font-black text-[10px] uppercase">
                      <CheckCircle className="w-3 h-3 text-emerald-500" />
-                     ตรวจแล้ว
+                     ตรวจ Daily แล้ว
                    </div>
                    <p className="text-lg sm:text-xl font-black text-slate-900 mt-1 font-mono">
                      {shiftEquipmentsStatus.checkedList.length}
                    </p>
-                   <p className="text-[10px] text-slate-500 truncate font-semibold">ผ่านการบันทึก</p>
+                   <p className="text-[10px] text-slate-500 truncate font-semibold">ลงค่า STD เพิ่มได้</p>
+                 </button>
+
+                 <button
+                   type="button"
+                   onClick={() => { setHubTab('checklist'); setChecklistFilter('all'); setInspectionPhase('std_calibration'); }}
+                   className={cn(
+                     "p-2.5 sm:p-3 rounded-2xl border text-left transition-all cursor-pointer",
+                     inspectionPhase === 'std_calibration'
+                       ? "bg-purple-50 border-purple-300 ring-2 ring-purple-400/20 shadow-xs" 
+                       : "bg-slate-50 border-slate-200 hover:bg-purple-50/50 hover:border-purple-200"
+                   )}
+                 >
+                   <div className="flex items-center gap-1.5 text-purple-700 font-black text-[10px] uppercase">
+                     <span>🧪</span>
+                     บันทึกผล STD
+                   </div>
+                   <p className="text-lg sm:text-xl font-black text-purple-900 mt-1 font-mono">
+                     {shiftEquipmentsStatus.stdRecordedList.length}
+                   </p>
+                   <p className="text-[10px] text-purple-700 truncate font-semibold">ไม่นับว่าตรวจช้า</p>
                  </button>
 
                  <button
@@ -1200,14 +1310,21 @@ export default function PerformCheck({ onSaved, initialEqCode, selectedDept = 'a
                                </div>
 
                                {/* Action Buttons */}
-                               <div className="pt-2 border-t border-slate-100 flex items-center gap-2">
+                               <div className="pt-2 border-t border-slate-100 flex items-center gap-2 flex-wrap">
                                  <button
                                    type="button"
-                                   onClick={() => handleSelect(eq)}
+                                   onClick={() => handleSelect(eq, 'routine')}
                                    className="flex-1 py-2.5 px-3 bg-rose-600 hover:bg-rose-700 active:scale-95 text-white font-black text-xs rounded-xl shadow-xs transition-all flex items-center justify-center gap-1.5 cursor-pointer"
                                  >
                                    <Zap className="w-4 h-4 fill-white" />
-                                   <span>⚡ ตรวจเครื่องนี้</span>
+                                   <span>📅 ตรวจ Daily Check</span>
+                                 </button>
+                                 <button
+                                   type="button"
+                                   onClick={() => handleSelect(eq, 'std_calibration')}
+                                   className="py-2.5 px-3 bg-purple-600 hover:bg-purple-700 active:scale-95 text-white font-black text-xs rounded-xl shadow-xs transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+                                 >
+                                   <span>🧪 บันทึกผล STD</span>
                                  </button>
                                  <button
                                    type="button"
@@ -1217,11 +1334,10 @@ export default function PerformCheck({ onSaved, initialEqCode, selectedDept = 'a
                                      setShowCamera(true);
                                      setScanError('');
                                    }}
-                                   className="py-2.5 px-3.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs rounded-xl transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+                                   className="py-2.5 px-3 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs rounded-xl transition-all flex items-center justify-center gap-1.5 cursor-pointer"
                                    title="สแกน QR หน้าเครื่อง"
                                  >
                                    <Camera className="w-4 h-4 text-slate-600" />
-                                   <span>สแกน QR</span>
                                  </button>
                                 </div>
                              </div>
@@ -1230,14 +1346,14 @@ export default function PerformCheck({ onSaved, initialEqCode, selectedDept = 'a
                      </>
                    )}
 
-                   {/* COMPLETED LIST */}
+                   {/* COMPLETED LIST (Shows both Daily Check AND separate Pre-Test STD logs without overwriting!) */}
                    {(checklistFilter === 'completed' || checklistFilter === 'all') && (
                      <>
                        {checklistFilter === 'all' && shiftEquipmentsStatus.checkedList.length > 0 && (
                          <div className="flex items-center gap-2 pt-4">
                            <span className="w-2.5 h-2.5 rounded-full bg-emerald-500"></span>
                            <h4 className="text-xs font-black text-slate-800 uppercase tracking-wider">
-                             รายการที่ตรวจเสร็จแล้ว ({shiftEquipmentsStatus.checkedList.length} เครื่อง)
+                             เครื่องที่ตรวจ Daily Check แล้ว · สามารถกดบันทึกค่า STD ก่อนทดสอบแยกต่างหากได้ ({shiftEquipmentsStatus.checkedList.length} เครื่อง)
                            </h4>
                          </div>
                        )}
@@ -1262,38 +1378,72 @@ export default function PerformCheck({ onSaved, initialEqCode, selectedDept = 'a
                            const q = searchFilter.toLowerCase();
                            return eq.name.toLowerCase().includes(q) || eq.code.toLowerCase().includes(q) || (eq.location || '').toLowerCase().includes(q);
                          })
-                         .map(({ eq, log }) => (
+                         .map(({ eq, log, stdLogs }) => (
                            <div 
                              key={log.id || eq.id}
-                             className="bg-white rounded-2xl border border-emerald-100 p-4 shadow-2xs space-y-2.5"
+                             className="bg-white rounded-2xl border border-emerald-200/80 p-4 shadow-2xs space-y-3"
                            >
                              <div className="flex items-start justify-between gap-3">
-                               <div className="min-w-0">
+                               <div className="min-w-0 flex-1">
                                  <div className="flex items-center gap-2 mb-1 flex-wrap">
                                    <span className="px-2 py-0.5 rounded-md bg-emerald-50 text-emerald-700 text-[10px] font-mono font-black border border-emerald-200">
                                      {eq.code}
                                    </span>
                                    <span className="px-2 py-0.5 rounded-md bg-emerald-100 text-emerald-800 text-[9px] font-bold flex items-center gap-1">
-                                     <Check className="w-3 h-3 text-emerald-600" /> ตรวจเสร็จแล้ว
+                                     <Check className="w-3 h-3 text-emerald-600" /> 📅 ตรวจ Daily Check แล้ว
                                    </span>
-                                   <span className="text-[10px] font-mono font-bold text-slate-400">
+                                   <span className="text-[10px] font-mono font-bold text-emerald-700 bg-emerald-50/70 px-1.5 py-0.5 rounded">
                                      ⏰ {format(new Date(log.timestamp), 'HH:mm')} น.
                                    </span>
+                                   {stdLogs.length > 0 && (
+                                     <span className="px-2 py-0.5 rounded-md bg-purple-600 text-white text-[9px] font-black">
+                                       🧪 บันทึก STD แล้ว ({stdLogs.length} รอบ · ไม่นับสาย)
+                                     </span>
+                                   )}
                                  </div>
                                  <h3 className="text-sm font-black text-slate-900 truncate">
                                    {eq.name}
                                  </h3>
-                                 <p className="text-[11px] text-slate-500 font-medium">
-                                   ผู้ตรวจ: <span className="font-bold text-slate-700">{log.operatorName}</span> · {log.notes || 'ทุกรายการปกติ'}
+                                 <p className="text-[11px] text-slate-500 font-medium mt-0.5">
+                                   ผล Daily Check: <span className="font-bold text-slate-700">{log.operatorName}</span> · {log.notes || 'ทุกรายการปกติ'}
                                  </p>
-                               </div>
 
+                                 {/* Separate STD Calibration Records Box (Never overwrites Daily Check!) */}
+                                 {stdLogs.length > 0 && (
+                                   <div className="mt-2.5 p-2.5 rounded-xl bg-purple-50/80 border border-purple-200 space-y-1">
+                                     <p className="text-[10px] font-black text-purple-900 flex items-center gap-1">
+                                       <span>🧪 ประวัติบันทึกค่า STD ก่อนทดสอบในกะนี้ (แยกจาก Daily Check):</span>
+                                     </p>
+                                     {stdLogs.map((sLog, sIdx) => (
+                                       <div key={sLog.id || sIdx} className="flex items-center justify-between text-[10px] text-purple-800 font-semibold bg-white/80 px-2 py-1 rounded-lg border border-purple-100">
+                                         <span className="truncate pr-2">
+                                           รอบที่ {sIdx + 1}: ผู้บันทึก <b>{sLog.operatorName}</b> · {sLog.notes?.replace('[ผลทดสอบ STD หน้างาน] ', '') || 'ค่ามาตรฐานปกติ'}
+                                         </span>
+                                         <span className="font-mono font-black text-purple-700 shrink-0">
+                                           {format(new Date(sLog.timestamp), 'HH:mm น.')}
+                                         </span>
+                                       </div>
+                                     ))}
+                                   </div>
+                                 )}
+                               </div>
+                             </div>
+
+                             {/* Two Distinct Non-Colliding Action Buttons */}
+                             <div className="pt-2 border-t border-slate-100 flex items-center gap-2 flex-wrap">
                                <button
                                  type="button"
-                                 onClick={() => handleSelect(eq)}
-                                 className="px-3 py-1.5 bg-slate-50 hover:bg-slate-100 text-slate-600 font-bold text-[11px] rounded-xl border border-slate-200 transition-colors shrink-0 cursor-pointer"
+                                 onClick={() => handleSelect(eq, 'std_calibration')}
+                                 className="flex-1 py-2 px-3 bg-purple-600 hover:bg-purple-700 active:scale-95 text-white font-black text-xs rounded-xl shadow-xs transition-all flex items-center justify-center gap-1.5 cursor-pointer"
                                >
-                                 ตรวจซ้ำ / แก้ไข
+                                 <span>🧪 บันทึกผล STD ก่อนทดสอบ (ไม่ทับ Daily Check)</span>
+                               </button>
+                               <button
+                                 type="button"
+                                 onClick={() => handleSelect(eq, 'routine')}
+                                 className="py-2 px-3 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-[11px] rounded-xl border border-slate-200 transition-colors shrink-0 cursor-pointer"
+                               >
+                                 ✏️ แก้ไข Daily Check
                                </button>
                              </div>
                            </div>

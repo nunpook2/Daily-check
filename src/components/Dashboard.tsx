@@ -234,9 +234,23 @@ const getShiftStatusInfo = (
   const targetTotal = targetEqs ? targetEqs.length : activeEqsCount;
   const isComplete = checkedUniqueCount >= targetTotal && targetTotal > 0;
   
-  // Sort logs by timestamp ascending to get the latest (last machine) checked time
-  const sortedLogs = [...shiftLogs].sort((a, b) => a.timestamp - b.timestamp);
+  // Sort routine logs by timestamp ascending to get the latest (last machine) routine check time
+  // STD test runs (isLogStdTest) performed later when work starts are exempt from the control window and do NOT count as late!
+  const routineLogs = shiftLogs.filter(l => !isLogStdTest(l, shiftLogs));
+  const logsPool = routineLogs.length > 0 ? routineLogs : shiftLogs;
+
+  // Deduplicate per equipment by taking the EARLIEST routine check per equipment
+  // so that any subsequent STD test or re-check (e.g. MI-035, X-ray after 10:00 AM) never pushes the shift completion time past 10:00!
+  const earliestByEq = new Map<string, CheckLog>();
+  [...logsPool].sort((a, b) => a.timestamp - b.timestamp).forEach(log => {
+    const eqKey = (log.equipmentCode || log.equipmentId || log.equipmentName || '').toLowerCase().trim();
+    if (!earliestByEq.has(eqKey)) {
+      earliestByEq.set(eqKey, log);
+    }
+  });
+  const sortedLogs = Array.from(earliestByEq.values()).sort((a, b) => a.timestamp - b.timestamp);
   const lastLog = sortedLogs.length > 0 ? sortedLogs[sortedLogs.length - 1] : null;
+  const stdLogsCount = shiftLogs.filter(l => isLogStdTest(l, shiftLogs)).length;
 
   let latestCheckHour: number | null = null;
   let latestCheckTimeStr: string | null = null;
@@ -487,89 +501,121 @@ export default function Dashboard({
        // NIGHT shift (20:00 - 08:00)
        const nightShiftStarted = !isToday || hours >= 20;
        if (nightShiftStarted) {
-          const log = historyLogs.find(l => l.dateKey === dateStr && l.shift === 'NIGHT');
-          let isIdle = false;
-          let isIncomplete = false;
-          let isPassed = false;
-          let operatorName = 'ไม่ได้ตรวจสอบ / ค้างตรวจ';
+          const nightLogs = historyLogs
+             .filter(l => l.dateKey === dateStr && l.shift === 'NIGHT')
+             .sort((a, b) => a.timestamp - b.timestamp);
 
-          if (!isNightApplicable) {
-             isIdle = true;
-             isPassed = true;
-             operatorName = '⚪ ไม่ตรวจกะดึก (กะเช้าเท่านั้น)';
-          } else if (isExempt && !log) {
-             isIdle = true;
-             isPassed = true;
-             operatorName = '🛠️ ยกเว้น (อยู่ระหว่างปิดปรับปรุงซ่อมแซม)';
-          } else if (log) {
-             isIdle = log.notes?.includes('ไม่ได้ใช้งาน') || log.notes?.includes('ติดทดสอบ');
-             isPassed = log.status === 'passed';
-             operatorName = log.operatorName || 'ไม่ระบุ';
-             
-             if (!isIdle) {
-                isIncomplete = isLogIncomplete(log, eqItems);
+          if (nightLogs.length > 0) {
+             nightLogs.forEach((log, idx) => {
+                const isStd = isLogStdTest(log, nightLogs, checkItems);
+                const isIdle = !isStd && (log.notes?.includes('ไม่ได้ใช้งาน') || log.notes?.includes('ติดทดสอบ'));
+                const isPassed = log.status === 'passed';
+                const operatorName = log.operatorName || 'ไม่ระบุ';
+                const isIncomplete = (!isIdle && !isStd) ? isLogIncomplete(log, eqItems) : false;
+
+                timelineItems.push({
+                   id: `${dateStr}-NIGHT-${log.id || idx}`,
+                   dateKey: dateStr,
+                   dateDisplay,
+                   shift: 'NIGHT',
+                   log,
+                   isStd,
+                   isIdle,
+                   isIncomplete,
+                   isPassed,
+                   operatorName,
+                   timestamp: log.timestamp
+                });
+             });
+          } else {
+             let isIdle = false;
+             let isPassed = false;
+             let operatorName = 'ไม่ได้ตรวจสอบ / ค้างตรวจ';
+             if (!isNightApplicable) {
+                isIdle = true;
+                isPassed = true;
+                operatorName = '⚪ ไม่ตรวจกะดึก (กะเช้าเท่านั้น)';
+             } else if (isExempt) {
+                isIdle = true;
+                isPassed = true;
+                operatorName = '🛠️ ยกเว้น (อยู่ระหว่างปิดปรับปรุงซ่อมแซม)';
              }
+             const nightTime = new Date(d);
+             nightTime.setHours(20, 0, 0, 0);
+             timelineItems.push({
+                id: `${dateStr}-NIGHT`,
+                dateKey: dateStr,
+                dateDisplay,
+                shift: 'NIGHT',
+                log: undefined,
+                isStd: false,
+                isIdle,
+                isIncomplete: false,
+                isPassed,
+                operatorName,
+                timestamp: nightTime.getTime()
+             });
           }
-
-          const nightTime = new Date(d);
-          nightTime.setHours(20, 0, 0, 0);
-
-          timelineItems.push({
-             id: `${dateStr}-NIGHT`,
-             dateKey: dateStr,
-             dateDisplay,
-             shift: 'NIGHT',
-             log,
-             isIdle,
-             isIncomplete,
-             isPassed,
-             operatorName,
-             timestamp: nightTime.getTime()
-          });
        }
 
        // DAY shift (08:00 - 20:00)
        const dayShiftStarted = !isToday || hours >= 8;
        if (dayShiftStarted) {
-          const log = historyLogs.find(l => l.dateKey === dateStr && l.shift === 'DAY');
-          let isIdle = false;
-          let isIncomplete = false;
-          let isPassed = false;
-          let operatorName = 'ไม่ได้ตรวจสอบ / ค้างตรวจ';
+          const dayLogs = historyLogs
+             .filter(l => l.dateKey === dateStr && l.shift === 'DAY')
+             .sort((a, b) => a.timestamp - b.timestamp);
 
-          if (!isDayApplicable) {
-             isIdle = true;
-             isPassed = true;
-             operatorName = '⚪ ไม่ตรวจกะเช้า (กะดึกเท่านั้น)';
-          } else if (isExempt && !log) {
-             isIdle = true;
-             isPassed = true;
-             operatorName = '🛠️ ยกเว้น (อยู่ระหว่างปิดปรับปรุงซ่อมแซม)';
-          } else if (log) {
-             isIdle = log.notes?.includes('ไม่ได้ใช้งาน') || log.notes?.includes('ติดทดสอบ');
-             isPassed = log.status === 'passed';
-             operatorName = log.operatorName || 'ไม่ระบุ';
-             
-             if (!isIdle) {
-                isIncomplete = isLogIncomplete(log, eqItems);
+          if (dayLogs.length > 0) {
+             dayLogs.forEach((log, idx) => {
+                const isStd = isLogStdTest(log, dayLogs, checkItems);
+                const isIdle = !isStd && (log.notes?.includes('ไม่ได้ใช้งาน') || log.notes?.includes('ติดทดสอบ'));
+                const isPassed = log.status === 'passed';
+                const operatorName = log.operatorName || 'ไม่ระบุ';
+                const isIncomplete = (!isIdle && !isStd) ? isLogIncomplete(log, eqItems) : false;
+
+                timelineItems.push({
+                   id: `${dateStr}-DAY-${log.id || idx}`,
+                   dateKey: dateStr,
+                   dateDisplay,
+                   shift: 'DAY',
+                   log,
+                   isStd,
+                   isIdle,
+                   isIncomplete,
+                   isPassed,
+                   operatorName,
+                   timestamp: log.timestamp
+                });
+             });
+          } else {
+             let isIdle = false;
+             let isPassed = false;
+             let operatorName = 'ไม่ได้ตรวจสอบ / ค้างตรวจ';
+             if (!isDayApplicable) {
+                isIdle = true;
+                isPassed = true;
+                operatorName = '⚪ ไม่ตรวจกะเช้า (กะดึกเท่านั้น)';
+             } else if (isExempt) {
+                isIdle = true;
+                isPassed = true;
+                operatorName = '🛠️ ยกเว้น (อยู่ระหว่างปิดปรับปรุงซ่อมแซม)';
              }
+             const dayTime = new Date(d);
+             dayTime.setHours(8, 0, 0, 0);
+             timelineItems.push({
+                id: `${dateStr}-DAY`,
+                dateKey: dateStr,
+                dateDisplay,
+                shift: 'DAY',
+                log: undefined,
+                isStd: false,
+                isIdle,
+                isIncomplete: false,
+                isPassed,
+                operatorName,
+                timestamp: dayTime.getTime()
+             });
           }
-
-          const dayTime = new Date(d);
-          dayTime.setHours(8, 0, 0, 0);
-
-          timelineItems.push({
-             id: `${dateStr}-DAY`,
-             dateKey: dateStr,
-             dateDisplay,
-             shift: 'DAY',
-             log,
-             isIdle,
-             isIncomplete,
-             isPassed,
-             operatorName,
-             timestamp: dayTime.getTime()
-          });
        }
     }
 
@@ -1139,7 +1185,7 @@ export default function Dashboard({
                            {/* DAY SHIFT MONITOR ZONE */}
                            <div className="flex items-center justify-between p-2 rounded-xl bg-slate-50 border border-slate-200/60 text-xs">
                               <span className="font-black text-slate-700 flex items-center gap-1">
-                                 🌞 กะกลางวัน (เช้า):
+                                 🌞 Daily กะเช้า:
                               </span>
                               
                               {(() => {
@@ -1150,25 +1196,29 @@ export default function Dashboard({
                                        </span>
                                     );
                                  }
-                                 const dayLog = eqLogsToday.find(l => l.shift === 'DAY') || (eqLogsToday.length === 1 && !eqLogsToday.some(l => l.shift === 'NIGHT') ? eqLogsToday[0] : undefined);
-                                 if (dayLog) {
-                                    const isIdle = dayLog.notes?.includes('ไม่ได้ใช้งาน') || dayLog.notes?.includes('ติดทดสอบ');
-                                    if (isIdle) {
-                                       return (
-                                          <span className="px-2 py-1 rounded bg-sky-50 text-sky-700 border border-sky-200 font-black text-[10px] shadow-xs">
-                                             💤 ไม่ใช้งาน / ติดทดสอบ
-                                          </span>
-                                       );
-                                    }
-                                    return dayLog.status === 'passed' ? (
-                                       <span className="px-2 py-1 rounded bg-emerald-50 text-emerald-700 border border-emerald-200 font-black text-[10px] shadow-xs truncate max-w-[120px]" title={`ผู้ตรวจ: ${dayLog.operatorName}`}>
-                                          ✅ ตรวจผ่าน ({dayLog.operatorName.split(' ')[0]})
-                                       </span>
-                                    ) : (
-                                       <span className="px-2 py-1 rounded bg-rose-50 text-rose-700 border border-rose-200 font-black text-[10px] shadow-xs">
-                                          ❌ พบปัญหาหน้างาน
-                                        </span>
-                                     );
+                                 const dayShiftLogs = eqLogsToday
+                                    .filter(l => l.shift === 'DAY' || (eqLogsToday.length === 1 && !eqLogsToday.some(x => x.shift === 'NIGHT')))
+                                    .sort((a, b) => a.timestamp - b.timestamp);
+                                 const dayRoutineLog = dayShiftLogs.find(l => !isLogStdTest(l, dayShiftLogs, checkItems)) || dayShiftLogs[0];
+                                 if (dayRoutineLog) {
+                                    const isIdle = dayRoutineLog.notes?.includes('ไม่ได้ใช้งาน') || dayRoutineLog.notes?.includes('ติดทดสอบ');
+                                    return (
+                                       <div className="flex items-center gap-1 flex-wrap justify-end">
+                                          {isIdle ? (
+                                             <span className="px-2 py-1 rounded bg-sky-50 text-sky-700 border border-sky-200 font-black text-[10px] shadow-xs" title={`ตรวจเมื่อ ${format(dayRoutineLog.timestamp, 'HH:mm น.')}`}>
+                                                💤 ไม่ใช้งาน / ติดคิว ({format(dayRoutineLog.timestamp, 'HH:mm')})
+                                             </span>
+                                          ) : dayRoutineLog.status === 'passed' ? (
+                                             <span className="px-2 py-1 rounded bg-emerald-50 text-emerald-700 border border-emerald-200 font-black text-[10px] shadow-xs truncate max-w-[140px]" title={`ผู้ตรวจ: ${dayRoutineLog.operatorName} เวลา ${format(dayRoutineLog.timestamp, 'HH:mm น.')}`}>
+                                                ✅ ผ่าน ({format(dayRoutineLog.timestamp, 'HH:mm')} · {dayRoutineLog.operatorName.split(' ')[0]})
+                                             </span>
+                                          ) : (
+                                             <span className="px-2 py-1 rounded bg-rose-50 text-rose-700 border border-rose-200 font-black text-[10px] shadow-xs">
+                                                ❌ พบปัญหาหน้างาน
+                                             </span>
+                                          )}
+                                       </div>
+                                    );
                                   }
                                   return (
                                      <button 
@@ -1185,7 +1235,7 @@ export default function Dashboard({
                            {/* NIGHT SHIFT MONITOR ZONE */}
                            <div className="flex items-center justify-between p-2 rounded-xl bg-slate-50 border border-slate-200/60 text-xs">
                               <span className="font-black text-slate-700 flex items-center gap-1">
-                                 🌙 กะกลางคืน (ดึก):
+                                 🌙 Daily กะดึก:
                               </span>
                               
                               {(() => {
@@ -1196,25 +1246,29 @@ export default function Dashboard({
                                        </span>
                                     );
                                  }
-                                 const nightLog = eqLogsToday.find(l => l.shift === 'NIGHT');
-                                 if (nightLog) {
-                                    const isIdle = nightLog.notes?.includes('ไม่ได้ใช้งาน') || nightLog.notes?.includes('ติดทดสอบ');
-                                    if (isIdle) {
-                                       return (
-                                          <span className="px-2 py-1 rounded bg-sky-50 text-sky-700 border border-sky-200 font-black text-[10px] shadow-xs">
-                                             💤 ไม่ใช้งาน / ติดทดสอบ
-                                          </span>
-                                       );
-                                    }
-                                    return nightLog.status === 'passed' ? (
-                                       <span className="px-2 py-1 rounded bg-emerald-50 text-emerald-700 border border-emerald-200 font-black text-[10px] shadow-xs truncate max-w-[120px]" title={`ผู้ตรวจ: ${nightLog.operatorName}`}>
-                                          ✅ ตรวจผ่าน ({nightLog.operatorName.split(' ')[0]})
-                                       </span>
-                                    ) : (
-                                       <span className="px-2 py-1 rounded bg-rose-50 text-rose-700 border border-rose-200 font-black text-[10px] shadow-xs">
-                                          ❌ พบปัญหาหน้างาน
-                                        </span>
-                                     );
+                                 const nightShiftLogs = eqLogsToday
+                                    .filter(l => l.shift === 'NIGHT')
+                                    .sort((a, b) => a.timestamp - b.timestamp);
+                                 const nightRoutineLog = nightShiftLogs.find(l => !isLogStdTest(l, nightShiftLogs, checkItems)) || nightShiftLogs[0];
+                                 if (nightRoutineLog) {
+                                    const isIdle = nightRoutineLog.notes?.includes('ไม่ได้ใช้งาน') || nightRoutineLog.notes?.includes('ติดทดสอบ');
+                                    return (
+                                       <div className="flex items-center gap-1 flex-wrap justify-end">
+                                          {isIdle ? (
+                                             <span className="px-2 py-1 rounded bg-sky-50 text-sky-700 border border-sky-200 font-black text-[10px] shadow-xs" title={`ตรวจเมื่อ ${format(nightRoutineLog.timestamp, 'HH:mm น.')}`}>
+                                                💤 ไม่ใช้งาน / ติดคิว ({format(nightRoutineLog.timestamp, 'HH:mm')})
+                                             </span>
+                                          ) : nightRoutineLog.status === 'passed' ? (
+                                             <span className="px-2 py-1 rounded bg-emerald-50 text-emerald-700 border border-emerald-200 font-black text-[10px] shadow-xs truncate max-w-[140px]" title={`ผู้ตรวจ: ${nightRoutineLog.operatorName} เวลา ${format(nightRoutineLog.timestamp, 'HH:mm น.')}`}>
+                                                ✅ ผ่าน ({format(nightRoutineLog.timestamp, 'HH:mm')} · {nightRoutineLog.operatorName.split(' ')[0]})
+                                             </span>
+                                          ) : (
+                                             <span className="px-2 py-1 rounded bg-rose-50 text-rose-700 border border-rose-200 font-black text-[10px] shadow-xs">
+                                                ❌ พบปัญหาหน้างาน
+                                             </span>
+                                          )}
+                                       </div>
+                                    );
                                   }
                                   return (
                                      <button 
@@ -1227,6 +1281,32 @@ export default function Dashboard({
                                   );
                                })()}
                            </div>
+
+                           {/* SEPARATE STD CALIBRATION ZONE (Never collides with Daily Check) */}
+                           {(() => {
+                              const dayShiftLogs = eqLogsToday.filter(l => l.shift === 'DAY');
+                              const nightShiftLogs = eqLogsToday.filter(l => l.shift === 'NIGHT');
+                              const stdLogsToday = [
+                                 ...dayShiftLogs.filter(l => isLogStdTest(l, dayShiftLogs, checkItems)),
+                                 ...nightShiftLogs.filter(l => isLogStdTest(l, nightShiftLogs, checkItems))
+                              ].sort((a, b) => b.timestamp - a.timestamp);
+
+                              if (stdLogsToday.length === 0) return null;
+                              const latestStd = stdLogsToday[0];
+                              return (
+                                 <div className="flex items-center justify-between p-2 rounded-xl bg-purple-50/90 border border-purple-200 text-xs">
+                                    <span className="font-black text-purple-900 flex items-center gap-1">
+                                       🧪 บันทึกผล STD ก่อนทดสอบ:
+                                    </span>
+                                    <span 
+                                       className="px-2 py-0.5 rounded bg-purple-600 text-white font-black text-[10px] shadow-xs"
+                                       title={`ผู้บันทึก STD: ${latestStd.operatorName} เวลา ${format(latestStd.timestamp, 'HH:mm น.')} (ไม่นับว่าล่าช้า)`}
+                                    >
+                                       ✨ {format(latestStd.timestamp, 'HH:mm น.')} ({stdLogsToday.length} รอบ · ไม่นับสาย)
+                                    </span>
+                                 </div>
+                              );
+                           })()}
                         </div>
                       )}
                    </div>
@@ -1301,15 +1381,27 @@ export default function Dashboard({
                               getShiftHistoryItems().map(item => {
                                  if (item.log) {
                                     return (
-                                       <div key={item.id} onClick={() => handleOpenLog(item.log)} className="p-3.5 rounded-xl border border-slate-200/60 hover:border-indigo-300 hover:shadow-sm bg-white transition-all cursor-pointer flex justify-between items-center text-xs">
+                                       <div key={item.id} onClick={() => handleOpenLog(item.log)} className={cn("p-3.5 rounded-xl border transition-all cursor-pointer flex justify-between items-center text-xs hover:shadow-sm bg-white", item.isStd ? "border-purple-200 hover:border-purple-400 bg-purple-50/20" : "border-slate-200/60 hover:border-indigo-300")}>
                                           <div>
-                                             <div className="flex items-center gap-2">
+                                             <div className="flex items-center gap-2 flex-wrap">
                                                 <span className="font-bold text-slate-800">{item.dateDisplay}</span>
-                                                <span className="font-bold text-indigo-600 bg-indigo-50 border border-indigo-100 px-2 py-0.5 rounded text-[10px]">
-                                                   {item.shift === 'DAY' ? '🌞 กะเช้า (08.00 - 20.00 น.)' : '🌙 กะดึก (20.00 - 08.00 น.)'}
+                                                <span className="font-mono text-[10px] font-bold text-slate-500 bg-slate-100 px-1.5 py-0.5 rounded">
+                                                   {format(item.log.timestamp, 'HH:mm น.')}
                                                 </span>
+                                                <span className="font-bold text-indigo-600 bg-indigo-50 border border-indigo-100 px-2 py-0.5 rounded text-[10px]">
+                                                   {item.shift === 'DAY' ? '🌞 กะเช้า' : '🌙 กะดึก'}
+                                                </span>
+                                                {item.isStd ? (
+                                                   <span className="font-black text-purple-800 bg-purple-100 border border-purple-200 px-2 py-0.5 rounded text-[10px]">
+                                                      🧪 บันทึกค่า STD ก่อนทดสอบ
+                                                   </span>
+                                                ) : (
+                                                   <span className="font-black text-emerald-800 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded text-[10px]">
+                                                      📅 Daily Check
+                                                   </span>
+                                                )}
                                              </div>
-                                             <p className="text-[10px] text-slate-400 mt-1 font-semibold truncate max-w-[200px]">ผู้บันทึก: {item.operatorName}</p>
+                                             <p className="text-[10px] text-slate-500 mt-1 font-semibold truncate max-w-[260px]">ผู้บันทึก: {item.operatorName} {item.isStd ? '· (ไม่นับว่าล่าช้า)' : ''}</p>
                                           </div>
                                           <span className={cn("px-2 py-0.5 rounded font-extrabold text-[10px]", 
                                              item.isIdle 
@@ -3449,16 +3541,16 @@ export default function Dashboard({
                               <span className="font-mono text-xs font-black text-slate-700 block">
                                 {format(new Date(log.timestamp), 'HH:mm น.')}
                               </span>
-                              {isLogStdTest(log) ? (
+                              {isLogStdTest(log, pointModalData.checkedLogs, checkItems) ? (
                                 <span className="text-[9px] font-black px-1.5 py-0.5 rounded uppercase mt-0.5 inline-block bg-purple-100 text-purple-800 border border-purple-200">
-                                  🧪 สอบเทียบ STD
+                                  🧪 บันทึก STD (ไม่นับสาย)
                                 </span>
                               ) : (
                                 <span className={cn(
                                   "text-[9px] font-black px-1.5 py-0.5 rounded uppercase mt-0.5 inline-block",
                                   log.status === 'passed' ? "bg-emerald-100 text-emerald-800" : "bg-rose-100 text-rose-800"
                                 )}>
-                                  {log.status === 'passed' ? 'ผ่านปกติ' : 'ต้องแก้ไข'}
+                                  📅 Daily Check · {log.status === 'passed' ? 'ผ่านปกติ' : 'ต้องแก้ไข'}
                                 </span>
                               )}
                             </div>

@@ -12,26 +12,121 @@ export interface ExcelExportOptions {
   departmentFilter?: string;
 }
 
-// Helper to determine if a log is an STD test run
-export function isLogStdTest(log: CheckLog): boolean {
+// Helper to determine if a log is a Pre-Test STD / On-Use run (บันทึกผล STD ก่อนทดสอบ)
+export function isLogStdTest(log: CheckLog, allLogsInSameShift?: CheckLog[], allCheckItems?: CheckItem[]): boolean {
+  if (!log) return false;
   if (log.isStdTest) return true;
-  if (log.checkPhase === 'std_calibration') return true;
+  if (log.checkPhase === 'std_calibration' || log.checkPhase === 'on_use') return true;
   if (log.checkCycle === 'std_calibration' || log.checkCycle === 'on-use') return true;
+
+  // If explicitly marked as daily-only or standby/skipOnUse, it is a Daily Check
+  if (log.checkCycle === 'daily' || log.skipOnUse === true) return false;
+  if (log.notes?.includes('ไม่ได้ใช้งาน') || log.notes?.includes('ติดทดสอบ')) return false;
+
   const n = (log.notes || '').toLowerCase();
   const a = (log.actionTaken || '').toLowerCase();
-  return n.includes('std') || n.includes('calibration') || n.includes('สอบเทียบ') || n.includes('ค่ามาตรฐาน') ||
-         a.includes('std') || a.includes('calibration') || a.includes('สอบเทียบ');
+  if (
+    n.includes('std') || n.includes('calibration') || n.includes('สอบเทียบ') || n.includes('ค่ามาตรฐาน') || n.includes('ก่อนทดสอบ') ||
+    a.includes('std') || a.includes('calibration') || a.includes('สอบเทียบ') || a.includes('ก่อนทดสอบ')
+  ) {
+    return true;
+  }
+
+  // If allLogsInSameShift is provided, check if this equipment already had an earlier log in the same shift!
+  // When a machine is checked in the morning (Daily Check) and then logged again later (>10:00) for STD before testing,
+  // any subsequent log after the earliest log for that machine in the same shift is an STD / Pre-Test log!
+  if (allLogsInSameShift && allLogsInSameShift.length > 1) {
+    const eqKey = (log.equipmentCode || log.equipmentId || log.equipmentName || '').toLowerCase();
+    const sameEqLogs = allLogsInSameShift
+      .filter(l => {
+        const k = (l.equipmentCode || l.equipmentId || l.equipmentName || '').toLowerCase();
+        return (
+          l.equipmentId === log.equipmentId ||
+          (log.equipmentCode && (l.equipmentCode === log.equipmentCode || l.equipmentId === log.equipmentCode)) ||
+          (log.equipmentName && l.equipmentName && l.equipmentName.toLowerCase() === log.equipmentName.toLowerCase()) ||
+          (eqKey && k === eqKey)
+        );
+      })
+      .sort((aItem, bItem) => aItem.timestamp - bItem.timestamp);
+
+    if (sameEqLogs.length > 1 && sameEqLogs[0].id !== log.id && log.timestamp > sameEqLogs[0].timestamp) {
+      return true;
+    }
+  }
+
+  // Check if the log was recorded after the morning/night control window (e.g. > 10:00 in DAY shift)
+  // AND contains STD / On-Use test parameters (e.g. MI-035, X-ray, etc. where operator logged STD before testing)
+  const d = new Date(log.timestamp);
+  const hr = d.getHours() + d.getMinutes() / 60;
+  const isOutsideControlWindow =
+    log.isLate === true ||
+    (log.shift === 'DAY' && hr > 10.0) ||
+    (log.shift === 'NIGHT' && (hr > 22.0 || hr < 8.0));
+
+  if (isOutsideControlWindow && Array.isArray(log.responses) && log.responses.length > 0) {
+    const hasStdOrOnUseResponse = log.responses.some(r => {
+      const rName = (r.itemName || '').toLowerCase();
+      if (
+        rName.includes('std') ||
+        rName.includes('p601f') ||
+        rName.includes('orifice') ||
+        rName.includes('piston') ||
+        rName.includes('x-ray') ||
+        rName.includes('xray') ||
+        rName.includes('standard') ||
+        rName.includes('สอบเทียบ') ||
+        rName.includes('ก่อนทดสอบ') ||
+        rName.includes('ค่ามาตรฐาน')
+      ) {
+        return true;
+      }
+      if (allCheckItems && allCheckItems.length > 0) {
+        const matchedItem = allCheckItems.find(
+          i => i.id === r.checkItemId || (r.itemName && i.name.toLowerCase() === rName)
+        );
+        if (matchedItem && matchedItem.frequency === 'on-use') {
+          return true;
+        }
+      }
+      return false;
+    });
+
+    const eqStr = `${log.equipmentCode || ''} ${log.equipmentName || ''} ${log.equipmentId || ''}`.toLowerCase();
+    const isStdTestMachine = eqStr.includes('mi-035') || eqStr.includes('mi 035') || eqStr.includes('mi035') || eqStr.includes('x-ray') || eqStr.includes('xray');
+
+    if (hasStdOrOnUseResponse || isStdTestMachine) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+// Helper to cleanly separate a shift's logs into Daily Shift Checks vs Pre-Test STD Logs without losing any equipment coverage
+export function separateShiftLogs(shiftLogs: CheckLog[], allCheckItems?: CheckItem[]) {
+  const dailyLogs: CheckLog[] = [];
+  const stdLogs: CheckLog[] = [];
+
+  shiftLogs.forEach(log => {
+    if (isLogStdTest(log, shiftLogs, allCheckItems)) {
+      stdLogs.push(log);
+    } else {
+      dailyLogs.push(log);
+    }
+  });
+
+  return { dailyLogs, stdLogs };
 }
 
 // Helper to determine human-readable check phase
-export function getLogPhaseLabel(log: CheckLog): string {
-  if (isLogStdTest(log)) {
-    return '🧪 ทดสอบค่ามาตรฐาน STD (ก่อนเริ่มงานจริง)';
+export function getLogPhaseLabel(log: CheckLog, allLogsInSameShift?: CheckLog[], allCheckItems?: CheckItem[]): string {
+  if (isLogStdTest(log, allLogsInSameShift, allCheckItems)) {
+    return '🧪 บันทึกผล STD ก่อนทดสอบ (Pre-Test STD)';
   }
   if (log.notes?.includes('ไม่ได้ใช้งาน') || log.notes?.includes('ติดทดสอบ')) {
-    return '💤 ตรวจสภาพเครื่อง (เครื่องติดคิว/ไม่ได้ใช้งาน)';
+    return '💤 ตรวจประจำวัน (เครื่องติดคิว/ไม่ได้ใช้งาน)';
   }
-  return '📋 ตรวจสภาพความพร้อมประจำกะ (Routine Shift)';
+  return '📅 ตรวจเช็กประจำวันตามกะ (Daily Check)';
 }
 
 // Helper to calculate column widths dynamically
@@ -96,9 +191,15 @@ export async function generateAndDownloadExcel(options: ExcelExportOptions): Pro
   let logs = logsRaw.filter(l => l.dateKey >= start! && l.dateKey <= end!);
 
   if (options.phaseFilter === 'routine_only') {
-    logs = logs.filter(l => !isLogStdTest(l));
+    logs = logs.filter(l => {
+      const sameShift = logsRaw.filter(x => x.dateKey === l.dateKey && x.shift === l.shift);
+      return !isLogStdTest(l, sameShift, allCheckItems);
+    });
   } else if (options.phaseFilter === 'std_only') {
-    logs = logs.filter(l => isLogStdTest(l));
+    logs = logs.filter(l => {
+      const sameShift = logsRaw.filter(x => x.dateKey === l.dateKey && x.shift === l.shift);
+      return isLogStdTest(l, sameShift, allCheckItems);
+    });
   }
 
   // Sort logs chronologically (dateKey ASC, timestamp ASC)
@@ -114,7 +215,7 @@ export async function generateAndDownloadExcel(options: ExcelExportOptions): Pro
   // SHEET 1: สรุปภาพรวมรายเดือน (Monthly / Date-Range Summary)
   // =========================================================================
   const summaryRows: any[][] = [];
-  summaryRows.push(['รายงานสรุปการตรวจเช็กและทดสอบเครื่องมือวิทยาศาสตร์ (QC Inspection & STD Calibration Report)']);
+  summaryRows.push(['รายงานสรุปการตรวจเช็กประจำวัน (Daily Check) และบันทึกผล STD ก่อนทดสอบ (QC Inspection & Pre-Test STD Report)']);
   summaryRows.push([`ช่วงเวลาการประเมิน: ${start} ถึง ${end}`]);
   summaryRows.push([`วันที่จัดทำรายงาน: ${format(new Date(), 'dd/MM/yyyy HH:mm น.')}`]);
   summaryRows.push([]); // Empty line
@@ -123,13 +224,13 @@ export async function generateAndDownloadExcel(options: ExcelExportOptions): Pro
   summaryRows.push([
     'วันที่ (Date)',
     'วัน (Day)',
-    'กะเช้า: จำนวนตรวจ (เครื่อง)',
+    'กะเช้า: ตรวจ Daily Check (เครื่อง)',
     'กะเช้า: สแตนด์บาย/ติดคิว',
     'กะเช้า: หลุดเกณฑ์ (OOC)',
-    'กะดึก: จำนวนตรวจ (เครื่อง)',
+    'กะดึก: ตรวจ Daily Check (เครื่อง)',
     'กะดึก: สแตนด์บาย/ติดคิว',
     'กะดึก: หลุดเกณฑ์ (OOC)',
-    'รวมบันทึกทดสอบค่า STD',
+    'รวมบันทึกผล STD ก่อนทดสอบ (ครั้ง)',
     '% อัตราความสมบูรณ์',
     'หมายเหตุประจำวัน'
   ]);
@@ -151,15 +252,20 @@ export async function generateAndDownloadExcel(options: ExcelExportOptions): Pro
     const dayLogs = dLogs.filter(l => l.shift === 'DAY');
     const nightLogs = dLogs.filter(l => l.shift === 'NIGHT');
 
-    const dayChecked = dayLogs.length;
-    const dayStandby = dayLogs.filter(l => l.notes?.includes('ไม่ได้ใช้งาน') || l.notes?.includes('ติดทดสอบ')).length;
+    const dayDaily = dayLogs.filter(l => !isLogStdTest(l, dayLogs, allCheckItems));
+    const nightDaily = nightLogs.filter(l => !isLogStdTest(l, nightLogs, allCheckItems));
+
+    const dayChecked = dayDaily.length;
+    const dayStandby = dayDaily.filter(l => l.notes?.includes('ไม่ได้ใช้งาน') || l.notes?.includes('ติดทดสอบ')).length;
     const dayOoc = dayLogs.filter(l => l.status === 'failed' || l.status === 'needs_attention').length;
 
-    const nightChecked = nightLogs.length;
-    const nightStandby = nightLogs.filter(l => l.notes?.includes('ไม่ได้ใช้งาน') || l.notes?.includes('ติดทดสอบ')).length;
+    const nightChecked = nightDaily.length;
+    const nightStandby = nightDaily.filter(l => l.notes?.includes('ไม่ได้ใช้งาน') || l.notes?.includes('ติดทดสอบ')).length;
     const nightOoc = nightLogs.filter(l => l.status === 'failed' || l.status === 'needs_attention').length;
 
-    const stdCount = dLogs.filter(isLogStdTest).length;
+    const stdCount =
+      dayLogs.filter(l => isLogStdTest(l, dayLogs, allCheckItems)).length +
+      nightLogs.filter(l => isLogStdTest(l, nightLogs, allCheckItems)).length;
     const totalChecks = dayChecked + nightChecked;
 
     // Approximate expected total per day (active equipments count)
@@ -171,7 +277,7 @@ export async function generateAndDownloadExcel(options: ExcelExportOptions): Pro
     const dayName = dayNamesThai[dateObj.getDay()];
 
     let dayNotes = '';
-    if (stdCount > 0) dayNotes += `มีการทดสอบค่า STD ${stdCount} ครั้ง; `;
+    if (stdCount > 0) dayNotes += `บันทึกผล STD ก่อนทดสอบ ${stdCount} ครั้ง; `;
     if (dayOoc + nightOoc > 0) dayNotes += `พบหลุดเกณฑ์ ${dayOoc + nightOoc} จุด; `;
     if (!dayNotes) dayNotes = totalChecks > 0 ? 'การปฏิบัติงานปกติ' : 'ไม่มีบันทึกการตรวจ';
 
@@ -203,7 +309,7 @@ export async function generateAndDownloadExcel(options: ExcelExportOptions): Pro
     'วันที่ (Date)',
     'เวลา (Time น.)',
     'กะ (Shift)',
-    'ประเภทขั้นตอนการตรวจ (Inspection Phase)',
+    'ระบบการบันทึก (System Mode)',
     'รหัสเครื่องจักร (Code)',
     'ชื่อเครื่องจักร (Equipment Name)',
     'สถานที่ / ห้อง (Location)',
@@ -223,8 +329,9 @@ export async function generateAndDownloadExcel(options: ExcelExportOptions): Pro
       (log.equipmentName && (e.name === log.equipmentName || e.name.toLowerCase() === log.equipmentName.toLowerCase()))
     );
 
-    const isStd = isLogStdTest(log);
-    const phaseLabel = getLogPhaseLabel(log);
+    const sameShift = logsRaw.filter(x => x.dateKey === log.dateKey && x.shift === log.shift);
+    const isStd = isLogStdTest(log, sameShift, allCheckItems);
+    const phaseLabel = getLogPhaseLabel(log, sameShift, allCheckItems);
 
     // Status label
     let statusLabel = 'ผ่านเกณฑ์ปกติ (PASSED)';
@@ -235,9 +342,9 @@ export async function generateAndDownloadExcel(options: ExcelExportOptions): Pro
     }
 
     // Timing evaluation
-    let timingLabel = '✅ ตรวจในเวลาปกติ';
+    let timingLabel = '✅ ตรวจในเวลาควบคุมปกติ';
     if (isStd) {
-      timingLabel = '🧪 ทดสอบค่า STD เริ่มงานจริง (ยกเว้นล่าช้า)';
+      timingLabel = '🧪 บันทึกผล STD ก่อนทดสอบ (ไม่นำมาคิดเวลาสาย)';
     } else if (log.isLate) {
       timingLabel = '⏳ นอกช่วงเวลาควบคุมกะ (Late)';
     }
@@ -299,7 +406,8 @@ export async function generateAndDownloadExcel(options: ExcelExportOptions): Pro
 
   let stdCounter = 1;
   logs.forEach(log => {
-    const isStd = isLogStdTest(log);
+    const sameShift = logsRaw.filter(x => x.dateKey === log.dateKey && x.shift === log.shift);
+    const isStd = isLogStdTest(log, sameShift, allCheckItems);
     const eq = equipments.find(e => 
       e.id === log.equipmentId || 
       e.code === log.equipmentId || 

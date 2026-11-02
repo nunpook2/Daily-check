@@ -35,6 +35,7 @@ export default function OocLogs({ selectedDept = 'all' }: { selectedDept?: strin
   const [filterDate, setFilterDate] = useState<string>(format(new Date(), 'yyyy-MM-dd'));
   const [selectedEqIdFilter, setSelectedEqIdFilter] = useState<string | null>(null);
   const [selectedEqItems, setSelectedEqItems] = useState<CheckItem[]>([]);
+  const [phaseFilter, setPhaseFilter] = useState<'all' | 'daily' | 'std'>('all');
 
   // Edit log notes state
   const [selectedLog, setSelectedLog] = useState<CheckLog | null>(null);
@@ -170,7 +171,7 @@ export default function OocLogs({ selectedDept = 'all' }: { selectedDept?: strin
 
   // Selected equipment and its corresponding logs (matching by ID, Code, or Name)
   const selectedEq = equipments.find(e => e.id === selectedEqIdFilter);
-  const selectedEqLogs = selectedEq
+  const selectedEqAllLogs = selectedEq
     ? logs.filter(l => 
         l.equipmentId === selectedEq.id || 
         l.equipmentId === selectedEq.code || 
@@ -178,6 +179,13 @@ export default function OocLogs({ selectedDept = 'all' }: { selectedDept?: strin
         (l.equipmentName && (l.equipmentName === selectedEq.name || l.equipmentName.toLowerCase() === selectedEq.name.toLowerCase()))
       )
     : [];
+
+  const selectedEqLogs = selectedEqAllLogs.filter(log => {
+    if (phaseFilter === 'all') return true;
+    const sameShiftLogs = selectedEqAllLogs.filter(x => x.shift === log.shift);
+    const isStd = isLogStdTest(log, sameShiftLogs, selectedEqItems);
+    return phaseFilter === 'std' ? isStd : !isStd;
+  });
 
   return (
     <div className="relative w-full mx-auto flex flex-col space-y-6">
@@ -323,7 +331,7 @@ export default function OocLogs({ selectedDept = 'all' }: { selectedDept?: strin
                 {selectedEqIdFilter && (
                    <div className="lg:col-span-8 shadow-sm border border-slate-200/60 rounded-3xl bg-white overflow-hidden flex flex-col">
                        {/* Panel Header */}
-                       <div className="px-6 py-5 bg-slate-900 border-b border-slate-800 flex justify-between items-center shrink-0">
+                       <div className="px-6 py-5 bg-slate-900 border-b border-slate-800 flex flex-col sm:flex-row justify-between sm:items-center gap-3 shrink-0">
                             <div>
                               <h2 className="font-display font-black text-white text-lg sm:text-xl leading-tight">
                                 {equipments.find(e => e.id === selectedEqIdFilter)?.name || 'Unknown Equipment'}
@@ -335,6 +343,40 @@ export default function OocLogs({ selectedDept = 'all' }: { selectedDept?: strin
                                 <span>สถานที่: {(equipments.find(e => e.id === selectedEqIdFilter)?.location || 'Lab').replace('น้อง', 'ห้อง')}</span>
                               </div>
                             </div>
+
+                            {/* Phase Filter Tabs: All vs Daily Check vs STD Calibration */}
+                            <div className="flex items-center gap-1.5 bg-slate-800 p-1 rounded-xl border border-slate-700 self-start sm:self-auto">
+                              <button
+                                type="button"
+                                onClick={() => setPhaseFilter('all')}
+                                className={cn(
+                                  "px-2.5 py-1.5 rounded-lg text-[11px] font-black transition-all cursor-pointer",
+                                  phaseFilter === 'all' ? "bg-white text-slate-900 shadow-xs" : "text-slate-300 hover:text-white"
+                                )}
+                              >
+                                ทั้งหมด ({selectedEqAllLogs.length})
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setPhaseFilter('daily')}
+                                className={cn(
+                                  "px-2.5 py-1.5 rounded-lg text-[11px] font-black transition-all cursor-pointer flex items-center gap-1",
+                                  phaseFilter === 'daily' ? "bg-indigo-600 text-white shadow-xs" : "text-slate-300 hover:text-white"
+                                )}
+                              >
+                                <span>📅 Daily Check</span>
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setPhaseFilter('std')}
+                                className={cn(
+                                  "px-2.5 py-1.5 rounded-lg text-[11px] font-black transition-all cursor-pointer flex items-center gap-1",
+                                  phaseFilter === 'std' ? "bg-purple-600 text-white shadow-xs" : "text-slate-300 hover:text-white"
+                                )}
+                              >
+                                <span>🧪 ผล STD ก่อนทดสอบ</span>
+                              </button>
+                            </div>
                        </div>
 
                        {/* Logs Content Flow */}
@@ -342,40 +384,42 @@ export default function OocLogs({ selectedDept = 'all' }: { selectedDept?: strin
                           {selectedEqLogs.length > 0 ? (
                              selectedEqLogs.map((log, logIdx) => {
                                const isPassed = log.status === 'passed';
+                               const sameShiftLogs = selectedEqAllLogs.filter(x => x.shift === log.shift);
+                               const isStd = isLogStdTest(log, sameShiftLogs, selectedEqItems);
                                return (
                                    <div key={log.id} 
                                       className={cn("p-5 rounded-2xl border-2 transition-all duration-300 relative overflow-hidden bg-white shadow-sm hover:shadow-md",
-                                         isPassed ? "border-emerald-100" : "border-rose-100"
+                                         isStd ? "border-purple-200" : isPassed ? "border-emerald-100" : "border-rose-100"
                                       )} 
                                    >
                                       {/* Status vertical accent indicator */}
                                       <div className={cn("absolute left-0 top-0 bottom-0 w-1.5", 
-                                         isPassed ? "bg-emerald-500" : "bg-rose-500"
+                                         isStd ? "bg-purple-600" : isPassed ? "bg-emerald-500" : "bg-rose-500"
                                       )}></div>
 
                                       {/* Executive Log summary header block */}
                                       <div className="flex flex-wrap justify-between items-center gap-3 pl-2 mb-4">
                                          <div className="flex flex-wrap items-center gap-2">
-                                            {isLogStdTest(log) ? (
+                                            {isStd ? (
                                                <span className="px-2.5 py-1 rounded-lg text-[10px] font-extrabold uppercase tracking-wide shadow-sm bg-purple-600 text-white flex items-center gap-1">
-                                                  <span>🧪 บันทึกทดสอบค่า STD (เริ่มงานจริง)</span>
+                                                  <span>🧪 ระบบ 2: บันทึกผล STD ก่อนทดสอบ</span>
                                                </span>
                                             ) : log.notes?.includes('ไม่ได้ใช้งาน') || log.notes?.includes('ติดทดสอบ') ? (
                                                <span className="px-2.5 py-1 rounded-lg text-[10px] font-extrabold uppercase tracking-wide shadow-sm bg-sky-600 text-white">
-                                                  💤 ไม่ได้ใช้งาน / ติดคิวทดสอบ
+                                                  📅 ระบบ 1: Daily Check (💤 ไม่ได้ใช้งาน / ติดคิวทดสอบ)
                                                </span>
                                             ) : (
                                                <span className={cn("px-2.5 py-1 rounded-lg text-[10px] font-extrabold uppercase tracking-wide shadow-sm text-white", 
-                                                  isPassed ? "bg-emerald-500" : "bg-rose-500"
+                                                  isPassed ? "bg-emerald-600" : "bg-rose-500"
                                                )}>
-                                                  {isPassed ? '✓ ผ่านปกติ' : '✗ หลุดเกณฑ์ควบคุม'}
+                                                  📅 ระบบ 1: Daily Check ({isPassed ? '✓ ผ่านปกติ' : '✗ หลุดเกณฑ์ควบคุม'})
                                                </span>
                                             )}
                                             <span className="font-bold text-slate-700 text-xs bg-slate-100 px-2.5 py-1 rounded-lg border border-slate-200/50">กะการทำงาน: {log.shift === 'DAY' ? 'กะกลางวัน (Day)' : 'กะกลางคืน (Night)'}</span>
                                             <span className="font-bold text-slate-500 text-xs bg-white px-2.5 py-1 rounded-lg border border-slate-100 shadow-xs font-mono">{format(log.timestamp, 'HH:mm น.')}</span>
-                                            {isLogStdTest(log) && (
+                                            {isStd && (
                                                <span className="px-2 py-0.5 rounded-md bg-purple-50 text-purple-700 border border-purple-200 text-[10px] font-bold">
-                                                  ✨ ยกเว้นการประเมินล่าช้า
+                                                  ✨ ยกเว้นการประเมินล่าช้า (ไม่นับว่าตรวจช้า)
                                                </span>
                                             )}
                                          </div>
